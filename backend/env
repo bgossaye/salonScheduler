@@ -1,0 +1,2 @@
+MONGO_URI=mongodb+srv://bgossaye:5uEz8rWrHHQslQfQ@rakie-cluster.yquetxs.mongodb.net/salon?retryWrites=true&w=majority&appName=rakie-cluster
+PORT=5000
