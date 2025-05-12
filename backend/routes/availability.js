@@ -4,83 +4,85 @@ const Appointment = require('../models/Appointment');
 const Service = require('../models/Service');
 const StoreHours = require('../models/StoreHours');
 
-// Helper: Convert "HH:MM" to Date object on a given date
-const timeToDate = (dateStr, timeStr) => {
-  const [hour, minute] = timeStr.split(':').map(Number);
-  const date = new Date(`${dateStr}T00:00:00`);
-  date.setHours(hour, minute, 0, 0);
-  return date;
-};
+// Helper to parse "HH:MM" or "h:mm AM/PM" into Date object for given day
+function parseTime(dateStr, timeStr) {
+  const [hourStr, minuteStr] = timeStr.match(/\d{1,2}:\d{2}/)[0].split(':');
+  const hour = parseInt(hourStr);
+  const minute = parseInt(minuteStr);
+  const isPM = /PM/i.test(timeStr);
+  const isAM = /AM/i.test(timeStr);
 
-// Get weekday name
-const getWeekday = (dateStr) => {
-  return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
-};
+  let h = hour;
+  if (isPM && hour < 12) h += 12;
+  if (isAM && hour === 12) h = 0;
+
+  const base = new Date(dateStr);
+  base.setHours(h, minute, 0, 0);
+  return base;
+}
 
 // GET /api/availability?date=YYYY-MM-DD&serviceId=...
 router.get('/', async (req, res) => {
   const { date, serviceId } = req.query;
-  console.log('➡️  Availability requested:', { date, serviceId });
 
-  if (!date || !serviceId){
-    console.warn('⚠️ Missing date or serviceId');
+  if (!date || !serviceId) {
     return res.status(400).json({ error: 'Missing date or serviceId' });
   }
 
   try {
     const service = await Service.findById(serviceId);
-if (!service) {
-      console.warn('⚠️ No service found');
-      return res.status(404).json({ error: 'Service not found' });
+    if (!service) return res.status(404).json({ error: 'Service not found' });
+
+    const duration = service.duration; // in minutes
+    const weekday = new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
+    const storeHours = await StoreHours.findOne({ day: weekday });
+
+    if (!storeHours || storeHours.open === 'closed') {
+      return res.json([]);
     }
 
-    const duration = service.duration;
-
-    const weekday = getWeekday(date);
-    const hours = await StoreHours.findOne({ day: weekday });
-console.log('🕒 Store hours for', weekday, ':', hours);
-    console.log('🛠️ Service duration:', duration);
-
-    if (!hours) return res.status(404).json({ error: 'No store hours for this day' });
-
-    const openTime = timeToDate(date, hours.open);
-    const closeTime = timeToDate(date, hours.close);
+    const openTime = parseTime(date, storeHours.open);
+    const closeTime = parseTime(date, storeHours.close);
 
     const appointments = await Appointment.find({ date });
 
-    // Create list of blocked time ranges
-    const taken = appointments.map(appt => {
-      const start = timeToDate(appt.date, appt.time);
+    const takenRanges = appointments.map(appt => {
+      const start = parseTime(appt.date, appt.time);
       const end = new Date(start.getTime() + appt.duration * 60000);
       return { start, end };
     });
 
-    const availableSlots = [];
-    let cursor = new Date(openTime);
+    const results = [];
+    let current = new Date(openTime);
 
-    while (cursor.getTime() + duration * 60000 <= closeTime.getTime()) {
-      const slotStart = new Date(cursor);
-      const slotEnd = new Date(cursor.getTime() + duration * 60000);
+    while (current < closeTime) {
+      const end = new Date(current.getTime() + duration * 60000);
+      if (end > closeTime) break;
 
-      const overlaps = taken.some(appt =>
-        slotStart < appt.end && slotEnd > appt.start
+      const isBlocked = takenRanges.some(({ start, end: blockedEnd }) =>
+        current < blockedEnd && end > start
       );
 
-      if (!overlaps) {
-        availableSlots.push(slotStart.toLocaleTimeString('en-US', {
+      results.push({
+        time: current.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
           hour12: true
-        }));
-      }
+        }),
+        available: !isBlocked
+      });
 
-      cursor.setMinutes(cursor.getMinutes() + 30);
+      current.setMinutes(current.getMinutes() + 15);
     }
 
-    res.json(availableSlots);
+    if (results.length === 0) {
+      console.warn(`⚠️ No available slots for ${date} (${duration} min service)`);
+    }
+	//console.table(results);
+    res.json(results);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Error checking availability' });
+    console.error('❌ Error checking availability:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
