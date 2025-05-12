@@ -89,6 +89,12 @@ export default function ClientWelcome({ onClientLoaded }) {
             onChange={(e) => setPhone(e.target.value)}
             className="w-full p-2 border rounded mb-4"
             placeholder="Phone number"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handlePhoneSubmit();
+              }
+            }}
           />
           <button
             onClick={handlePhoneSubmit}
