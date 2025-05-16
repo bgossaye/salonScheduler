@@ -106,13 +106,13 @@ export default function ClientDashboard({ client }) {
               onClick={() => setEditing(true)}
               className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded"
             >
-              Edit
+              Edit My Appointment
             </button>
             <button
               onClick={handleCancel}
               className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
             >
-              Cancel
+              Cancel My Appointment
             </button>
           </div>
         </div>
