@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../../api';
 import AppointmentFormModal from './AppointmentFormModal';
 
 const formatTime12hr = (timeStr) => {
@@ -43,27 +43,27 @@ export default function AdminAppointments() {
   }, [filters]);
 
   const fetchAppointments = async () => {
-    const { data } = await axios.get('/api/admin/appointments', { params: filters });
+    const { data } = await API.get('/admin/appointments', { params: filters });
     setAppointments(sortAppointments(data));
   };
 
   const handleUpdate = async (id, update) => {
-    await axios.patch(`/api/admin/appointments/${id}`, update);
+    await API.patch(`/admin/appointments/${id}`, update);
     fetchAppointments();
   };
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure?')) {
-      await axios.delete(`/api/admin/appointments/${id}`);
+      await API.delete(`/admin/appointments/${id}`);
       fetchAppointments();
     }
   };
 
   const handleSave = async (form) => {
     if (selectedAppt?._id) {
-      await axios.patch(`/api/admin/appointments/${selectedAppt._id}`, form);
+      await API.patch(`/admin/appointments/${selectedAppt._id}`, form);
     } else {
-      await axios.post('/api/admin/appointments', form);
+      await API.post('/admin/appointments', form);
     }
     fetchAppointments();
   };
@@ -96,7 +96,12 @@ export default function AdminAppointments() {
           onChange={(e) => setFilters({ ...filters, client: e.target.value })}
           className="border px-2 py-1"
         />
-        <button onClick={() => { setSelectedAppt(null); setModalOpen(true); }} className="bg-blue-600 text-white px-4 py-2 ml-auto">+ Add Appointment</button>
+        <button
+          onClick={() => { setSelectedAppt(null); setModalOpen(true); }}
+          className="bg-blue-600 text-white px-4 py-2 ml-auto"
+        >
+          + Add Appointment
+        </button>
       </div>
 
       <table className="w-full border text-sm">

@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import axios from 'axios';
+import API from '../api';
 import { toast } from 'react-toastify';
-import ScheduleConfirmationModal from './ScheduleConfirmationModal'; 
+import ScheduleConfirmationModal from './ScheduleConfirmationModal';
 
 export default function ServiceSelector({ client, onBooked }) {
   const [categories, setCategories] = useState([]);
@@ -21,7 +21,7 @@ export default function ServiceSelector({ client, onBooked }) {
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        const { data } = await axios.get('/api/services');
+        const { data } = await API.get('/services');
         setServices(data);
         const uniqueCategories = [...new Set(data.map(s => s.category))];
         setCategories(uniqueCategories);
@@ -36,7 +36,7 @@ export default function ServiceSelector({ client, onBooked }) {
     const fetchAvailability = async () => {
       if (!selectedService || !selectedDate) return;
       try {
-        const { data } = await axios.get('/api/availability', {
+        const { data } = await API.get('/availability', {
           params: { date: selectedDate, serviceId: selectedService._id }
         });
         const normalized = Array.isArray(data) && data.length
@@ -73,7 +73,7 @@ export default function ServiceSelector({ client, onBooked }) {
     setSelectedDate(today);
 
     try {
-      const { data } = await axios.get(`/api/services/${service._id}/addons`);
+      const { data } = await API.get(`/services/${service._id}/addons`);
       if (data?.length) {
         setSuggestedAddOns(data);
         setShowAddOnModal(true);
@@ -88,17 +88,17 @@ export default function ServiceSelector({ client, onBooked }) {
   };
 
   const handleAddOnConfirm = (selectedIds) => {
-
-  const matchedAddOns = suggestedAddOns.filter(a => selectedIds.includes(a._id));
-  setSelectedAddOns(matchedAddOns);
+    const matchedAddOns = suggestedAddOns.filter(a => selectedIds.includes(a._id));
+    setSelectedAddOns(matchedAddOns);
     setShowAddOnModal(false);
   };
 
   const handleSubmit = async () => {
     if (!selectedService || !selectedDate || !selectedTime) return;
-const totalAddOnDuration = selectedAddOns.reduce((sum, addon) => sum + (addon.duration || 0), 0);
-const totalDuration = selectedService.duration + totalAddOnDuration;
-const serviceSummary = selectedService.name + (selectedAddOns.length ? ' + ' + selectedAddOns.map(a => a.name).join(', ') : '');
+
+    const totalAddOnDuration = selectedAddOns.reduce((sum, addon) => sum + (addon.duration || 0), 0);
+    const totalDuration = selectedService.duration + totalAddOnDuration;
+    const serviceSummary = selectedService.name + (selectedAddOns.length ? ' + ' + selectedAddOns.map(a => a.name).join(', ') : '');
 
     try {
       const payload = {
@@ -108,11 +108,11 @@ const serviceSummary = selectedService.name + (selectedAddOns.length ? ' + ' + s
         date: selectedDate,
         time: selectedTime,
         duration: totalDuration,
-	addOns: selectedAddOns.map(a => a._id),
+        addOns: selectedAddOns.map(a => a._id),
         status: 'Booked'
       };
 
-      const { data } = await axios.post('/api/appointments', payload);
+      const { data } = await API.post('/appointments', payload);
       toast.success('✅ Appointment booked!');
       if (onBooked) onBooked(data);
     } catch (err) {

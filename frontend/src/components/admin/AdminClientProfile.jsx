@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminClientProfile() {
   const { id } = useParams();
@@ -18,13 +18,13 @@ export default function AdminClientProfile() {
 
   const fetchClient = async () => {
     try {
-      const { data } = await axios.get(`/api/admin/clients/${id}`);
+      const { data } = await API.get(`/admin/clients/${id}`);
       const clientData = data.client || data;
       setClient(clientData);
 
       const phone = clientData.phone;
       if (phone) {
-        const apptRes = await axios.get(`/api/admin/appointments`, { params: { client: phone } });
+        const apptRes = await API.get('/admin/appointments', { params: { client: phone } });
         const sorted = apptRes.data.sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
         setAppointments(sorted);
         const upcoming = sorted.find(a => a.status === 'booked' || a.status === 'confirmed');
@@ -50,7 +50,7 @@ export default function AdminClientProfile() {
     const formData = new FormData();
     formData.append('image', file);
     try {
-      const { data } = await axios.post(`/api/admin/clients/${client._id}/upload-photo`, formData);
+      const { data } = await API.post(`/admin/clients/${client._id}/upload-photo`, formData);
       setClient({ ...client, profilePhoto: data.url });
     } catch (err) {
       alert('Failed to upload image.');
@@ -60,7 +60,7 @@ export default function AdminClientProfile() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await axios.patch(`/api/admin/clients/${client._id}`, client);
+      await API.patch(`/admin/clients/${client._id}`, client);
       alert('Client profile updated.');
     } catch (err) {
       alert('Failed to save changes.');

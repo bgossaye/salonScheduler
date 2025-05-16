@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import API from '../api';
 
 export default function ClientWelcome({ onClientLoaded }) {
-  const [step, setStep] = useState('phone'); // 'phone' | 'form'
+  const [step, setStep] = useState('phone');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
@@ -27,7 +27,7 @@ export default function ClientWelcome({ onClientLoaded }) {
     }
 
     try {
-      const res = await axios.get(`/api/clients?phone=${phone}`);
+      const res = await API.get(`/clients?phone=${phone}`);
       if (res.data) {
         onClientLoaded(res.data);
       } else {
@@ -35,7 +35,7 @@ export default function ClientWelcome({ onClientLoaded }) {
         setStep('form');
       }
     } catch (err) {
-      console.error('❌ AXIOS ERROR:', err);
+      console.error('❌ API ERROR:', err);
       setError('Unable to verify client. Try again later.');
     }
   };
@@ -60,7 +60,7 @@ export default function ClientWelcome({ onClientLoaded }) {
     };
 
     try {
-      const res = await axios.post('/api/clients', payload);
+      const res = await API.post('/clients', payload);
       onClientLoaded(res.data);
     } catch (err) {
       console.error('❌ Create client failed:', err);

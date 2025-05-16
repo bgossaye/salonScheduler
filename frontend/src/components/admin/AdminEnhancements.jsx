@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminEnhancements() {
   const [darkMode, setDarkMode] = useState(false);
 
   const exportCSV = async () => {
-    const response = await axios.get('/api/admin/export/appointments', {
+    const response = await API.get('/admin/export/appointments', {
       responseType: 'blob'
     });
     const url = window.URL.createObjectURL(new Blob([response.data]));
