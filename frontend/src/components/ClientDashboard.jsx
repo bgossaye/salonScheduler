@@ -28,41 +28,32 @@ export default function ClientDashboard({ client }) {
       });
   }, [client._id]);
 
-const handleCancel = () => {
-  if (!appointment) return;
+  const handleCancel = () => {
+    if (!appointment) return;
 
-  const cancelAppointment = () => {
-    axios
-      .delete(`/api/appointments/${appointment._id}`)
-      .then(() => {
-        setAppointment(null);
-        setConfirmation(null);
-        toast.success('✅ Appointment cancelled.');
-      })
-      .catch(err => {
-        console.error('❌ Cancel failed:', err);
-        toast.error('❌ Failed to cancel appointment.');
-      });
+    const cancelAppointment = () => {
+      axios
+        .delete(`/api/appointments/${appointment._id}`)
+        .then(() => {
+          setAppointment(null);
+          setConfirmation(null);
+          toast.success('✅ Appointment cancelled.');
+        })
+        .catch(err => {
+          console.error('❌ Cancel failed:', err);
+          toast.error('❌ Failed to cancel appointment.');
+        });
+    };
+
+    confirmAlert({
+      title: 'Cancel Appointment',
+      message: 'Are you sure you want to cancel this appointment?',
+      buttons: [
+        { label: 'Yes', onClick: cancelAppointment },
+        { label: 'No', onClick: () => toast.info('❎ Appointment not cancelled.') }
+      ]
+    });
   };
-
-  confirmAlert({
-    title: 'Cancel Appointment',
-    message: 'Are you sure you want to cancel this appointment?',
-    buttons: [
-      {
-        label: 'Yes',
-        onClick: cancelAppointment
-      },
-      {
-        label: 'No',
-        onClick: () => {
-          toast.info('❎ Appointment not cancelled.');
-        }
-      }
-    ]
-  });
-};
-
 
   const handleBooked = (newAppt) => {
     setAppointment(newAppt);
@@ -74,31 +65,38 @@ const handleCancel = () => {
     return new Date(`${date} ${time}`).toLocaleString();
   };
 
+  const renderAddOns = (addOns) => {
+    return Array.isArray(addOns) && addOns.length > 0
+      ? addOns.filter(a => a && a.name).map(a => a.name).join(', ')
+      : null;
+  };
+
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <h1><b>Welcome, {client?.fullName || 'Guest'}</b></h1>
 
-      {/* Greeting */}
-
-     <h1><b>Welcome, {client?.fullName || 'Guest'}</b></h1>
-
-      {/* ✅ Booking Confirmation */}
       {confirmation && (
         <div className="border border-green-400 bg-green-50 rounded shadow-md p-6">
           <h2 className="text-xl font-semibold text-green-700 mb-3">Appointment Confirmed ✅</h2>
           <p className="text-lg"><strong>Service:</strong> {confirmation.service}</p>
+          {renderAddOns(confirmation.addOns) && (
+            <p className="text-lg"><strong>Add-ons:</strong> {renderAddOns(confirmation.addOns)}</p>
+          )}
           <p className="text-lg"><strong>Date & Time:</strong> {formatDateTime(confirmation.date, confirmation.time)}</p>
         </div>
       )}
 
-      {/* ✅ Upcoming Appointment */}
       {appointment && !editing && (
         <div className="border rounded shadow-md p-6 bg-gray-50 space-y-3">
           <h2 className="text-lg font-semibold">Upcoming Appointment</h2>
           <p><strong>Service:</strong> {appointment.service}</p>
+          {renderAddOns(appointment.addOns) && (
+            <p><strong>Add-ons:</strong> {renderAddOns(appointment.addOns)}</p>
+          )}
           <p><strong>Date & Time:</strong> {formatDateTime(appointment.date, appointment.time)}</p>
           <p><strong>Status:</strong> {appointment.status}</p>
-<button
-onClick={() => window.location.href = 'https://rakiesalon.com'}
+          <button
+            onClick={() => window.location.href = 'https://rakiesalon.com'}
             className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-lg"
           >
             Done
@@ -120,7 +118,6 @@ onClick={() => window.location.href = 'https://rakiesalon.com'}
         </div>
       )}
 
-      {/* ✅ Service Selector (for new or editing appointment) */}
       {(!appointment || editing) && (
         <div>
           <p className="mb-3 text-gray-600">
@@ -130,11 +127,13 @@ onClick={() => window.location.href = 'https://rakiesalon.com'}
         </div>
       )}
 
-      {/* ✅ Past Appointment */}
       {pastAppointment && (
         <div className="border rounded shadow-md p-4 bg-gray-100 text-sm">
           <h2 className="font-semibold mb-1">Last Visit</h2>
           <p><strong>Service:</strong> {pastAppointment.service}</p>
+          {renderAddOns(pastAppointment.addOns) && (
+            <p><strong>Add-ons:</strong> {renderAddOns(pastAppointment.addOns)}</p>
+          )}
           <p><strong>Date & Time:</strong> {formatDateTime(pastAppointment.date, pastAppointment.time)}</p>
           <p><strong>Status:</strong> {pastAppointment.status}</p>
         </div>

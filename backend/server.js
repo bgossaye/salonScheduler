@@ -17,16 +17,42 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
 app.use(cors());
 app.use(express.json());
 
-// ✅ Routes
-const clientRoutes = require('./routes/clients');
-const appointmentRoutes = require('./routes/appointments');
-const serviceRoutes = require('./routes/services');
-const availabilityRoutes = require('./routes/availability');
+app.use('/uploads', express.static('uploads'));
 
+
+// ✅ Public Routes
+const clientRoutes =      require('./routes/client/clients');
+const appointmentRoutes = require('./routes/client/appointments');
+const serviceRoutes =     require('./routes/client/services');
+const availabilityRoutes = require('./routes/shared/availability');
+const schedulingRoutes = require('./routes/schedulingRoutes');
+
+// Use the route
 app.use('/api/clients', clientRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/availability', availabilityRoutes);
+app.use('/api/schedule', schedulingRoutes);
+
+
+// ✅ Admin Routes
+const adminAppointments = require('./routes/admin/appointments');
+const adminClients = require('./routes/admin/clients');
+const adminServices = require('./routes/admin/services');
+const adminStoreHours = require('./routes/admin/storeHours');
+const adminReminders = require('./routes/admin/reminders');
+const adminAuth = require('./routes/admin/auth');
+const adminReports = require('./routes/admin/reports');
+const adminExport = require('./routes/admin/export');
+
+app.use('/api/admin/appointments', adminAppointments);
+app.use('/api/admin/clients', adminClients);
+app.use('/api/admin/services', adminServices);
+app.use('/api/admin/store-hours', adminStoreHours);
+app.use('/api/admin/reminders', adminReminders);
+app.use('/api/admin/login', adminAuth);
+app.use('/api/admin/reports', adminReports);
+app.use('/api/admin/export', adminExport);
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;

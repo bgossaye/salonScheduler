@@ -4,6 +4,7 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import ScheduleConfirmationModal from './ScheduleConfirmationModal'; 
 
 export default function ServiceSelector({ client, onBooked }) {
   const [categories, setCategories] = useState([]);
@@ -13,90 +14,121 @@ export default function ServiceSelector({ client, onBooked }) {
   const [selectedDate, setSelectedDate] = useState(null);
   const [availableTimes, setAvailableTimes] = useState([]);
   const [selectedTime, setSelectedTime] = useState(null);
+  const [suggestedAddOns, setSuggestedAddOns] = useState([]);
+  const [selectedAddOns, setSelectedAddOns] = useState([]);
+  const [showAddOnModal, setShowAddOnModal] = useState(false);
 
-  const displayName = client?.firstName || client?.name || 'Guest';
-
-  // Load services and extract unique categories
   useEffect(() => {
-    axios.get('/api/services')
-      .then(res => {
-        const allServices = res.data;
-        const cats = [...new Set(allServices.map(s => s.category))];
-        setCategories(cats);
-        setServices(allServices);
-      })
-      .catch(err => console.error('Error loading services:', err));
+    const fetchServices = async () => {
+      try {
+        const { data } = await axios.get('/api/services');
+        setServices(data);
+        const uniqueCategories = [...new Set(data.map(s => s.category))];
+        setCategories(uniqueCategories);
+      } catch (err) {
+        console.error('Failed to load services:', err);
+      }
+    };
+    fetchServices();
   }, []);
 
-  // Load available time slots whenever service & date are selected
   useEffect(() => {
-    if (selectedService && selectedDate) {
-      axios.get('/api/availability', {
-        params: {
-          date: selectedDate,
-          serviceId: selectedService._id
-        }
-      }).then(res => {
-        const data = res.data;
-        const normalized = typeof data[0] === 'string'
-          ? data.map(t => ({ time: t, available: true }))
-          : data;
-
+    const fetchAvailability = async () => {
+      if (!selectedService || !selectedDate) return;
+      try {
+        const { data } = await axios.get('/api/availability', {
+          params: { date: selectedDate, serviceId: selectedService._id }
+        });
+        const normalized = Array.isArray(data) && data.length
+          ? data.map(({ time, status }) => ({
+              time,
+              available: status === 'free'
+            }))
+          : [];
         setAvailableTimes(normalized);
         setSelectedTime(null);
-      }).catch(err => {
+      } catch (err) {
         console.error('Error fetching availability:', err);
         setAvailableTimes([]);
-      });
-    }
-  }, [selectedDate, selectedService]);
+      }
+    };
+    fetchAvailability();
+  }, [selectedService, selectedDate]);
 
-  const handleDateClick = (arg) => {
-    const clicked = new Date(arg.dateStr);
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    if (clicked >= now) {
-      setSelectedDate(arg.dateStr);
-    } else {
-      toast.warning('You cannot book in the past.');
-    }
+  const handleDateClick = ({ dateStr }) => {
+    const clicked = new Date(dateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (clicked >= today) setSelectedDate(dateStr);
+    else toast.warning('You cannot book in the past.');
   };
 
   const filteredServices = services.filter(s => s.category === selectedCategory);
 
-  const handleSubmit = () => {
+  const handleServiceSelect = async (service) => {
+    setSelectedService(service);
+    setAvailableTimes([]);
+    setSelectedTime(null);
+    const today = new Date().toISOString().split('T')[0];
+    setSelectedDate(today);
+
+    try {
+      const { data } = await axios.get(`/api/services/${service._id}/addons`);
+      if (data?.length) {
+        setSuggestedAddOns(data);
+        setShowAddOnModal(true);
+      } else {
+        setSuggestedAddOns([]);
+        setSelectedAddOns([]);
+      }
+    } catch (err) {
+      console.error('Error fetching add-ons:', err);
+      setSuggestedAddOns([]);
+    }
+  };
+
+  const handleAddOnConfirm = (selectedIds) => {
+
+  const matchedAddOns = suggestedAddOns.filter(a => selectedIds.includes(a._id));
+  setSelectedAddOns(matchedAddOns);
+    setShowAddOnModal(false);
+  };
+
+  const handleSubmit = async () => {
     if (!selectedService || !selectedDate || !selectedTime) return;
+const totalAddOnDuration = selectedAddOns.reduce((sum, addon) => sum + (addon.duration || 0), 0);
+const totalDuration = selectedService.duration + totalAddOnDuration;
+const serviceSummary = selectedService.name + (selectedAddOns.length ? ' + ' + selectedAddOns.map(a => a.name).join(', ') : '');
 
-    const payload = {
-      clientId: client._id,
-      service: selectedService.name,
-      serviceId: selectedService._id,
-      date: selectedDate,
-      time: selectedTime,
-      duration: selectedService.duration,
-      status: 'Booked'
-    };
+    try {
+      const payload = {
+        clientId: client._id,
+        service: serviceSummary,
+        serviceId: selectedService._id,
+        date: selectedDate,
+        time: selectedTime,
+        duration: totalDuration,
+	addOns: selectedAddOns.map(a => a._id),
+        status: 'Booked'
+      };
 
-    axios.post('/api/appointments', payload)
-      .then((res) => {
-        toast.success('✅ Appointment booked!');
-        if (onBooked) onBooked(res.data);
-      })
-      .catch(err => toast.error('❌ Booking failed: ' + err.message));
+      const { data } = await axios.post('/api/appointments', payload);
+      toast.success('✅ Appointment booked!');
+      if (onBooked) onBooked(data);
+    } catch (err) {
+      toast.error('❌ Booking failed: ' + err.message);
+    }
   };
 
   return (
     <div className="p-4 space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Category Selection */}
         <div className="border rounded p-3 shadow">
           <h3 className="text-lg font-semibold mb-2">Select Category</h3>
-          {categories.map((cat) => (
+          {categories.map(cat => (
             <button
               key={cat}
-              className={`w-full text-left px-4 py-2 rounded mb-2 text-sm md:text-base ${
-                selectedCategory === cat ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200'
-              }`}
+              className={`w-full text-left px-4 py-2 rounded mb-2 text-sm md:text-base ${selectedCategory === cat ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
               onClick={() => {
                 setSelectedCategory(cat);
                 setSelectedService(null);
@@ -110,24 +142,13 @@ export default function ServiceSelector({ client, onBooked }) {
           ))}
         </div>
 
-        {/* Service Selection */}
         <div className="border rounded p-3 shadow">
           <h3 className="text-lg font-semibold mb-2">Select Service</h3>
-          {filteredServices.map((service) => (
+          {filteredServices.map(service => (
             <button
               key={service._id}
-              className={`w-full text-left px-4 py-2 rounded mb-2 text-sm md:text-base ${
-                selectedService?._id === service._id ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200'
-              }`}
-              onClick={() => {
-                setSelectedService(service);
-                setAvailableTimes([]);
-                setSelectedTime(null);
-
-                // Set today's date as default when a service is selected
-                const today = new Date().toISOString().split('T')[0];
-                setSelectedDate(today);
-              }}
+              className={`w-full text-left px-4 py-2 rounded mb-2 text-sm md:text-base ${selectedService?._id === service._id ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
+              onClick={() => handleServiceSelect(service)}
             >
               {service.name} – ${service.price}
             </button>
@@ -135,10 +156,8 @@ export default function ServiceSelector({ client, onBooked }) {
         </div>
       </div>
 
-      {/* Calendar + Time Slot Picker */}
       {selectedService && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-          {/* Calendar */}
           <div className="border rounded p-3 shadow h-[300px]">
             <h3 className="text-lg font-semibold mb-2">Select a Date</h3>
             <FullCalendar
@@ -150,18 +169,13 @@ export default function ServiceSelector({ client, onBooked }) {
               height={260}
               contentHeight={260}
               aspectRatio={1.35}
-              headerToolbar={{
-                left: 'prev,next',
-                center: 'title',
-                right: ''
-              }}
+              headerToolbar={{ left: 'prev,next', center: 'title', right: '' }}
             />
             {selectedDate && (
               <p className="mt-2 text-green-600">Selected: {selectedDate}</p>
             )}
           </div>
 
-          {/* Time Slots */}
           <div className="border rounded p-3 shadow h-[300px] flex flex-col">
             <h3 className="text-lg font-semibold mb-2">Available Times</h3>
             <div className="flex-1 overflow-y-auto space-y-2">
@@ -190,7 +204,6 @@ export default function ServiceSelector({ client, onBooked }) {
         </div>
       )}
 
-      {/* Submit Button */}
       {selectedService && selectedDate && selectedTime && (
         <div className="flex justify-center mt-6">
           <button
@@ -200,6 +213,14 @@ export default function ServiceSelector({ client, onBooked }) {
             Book Appointment
           </button>
         </div>
+      )}
+
+      {showAddOnModal && (
+        <ScheduleConfirmationModal
+          suggestedAddOns={suggestedAddOns}
+          onClose={() => setShowAddOnModal(false)}
+          onConfirm={handleAddOnConfirm}
+        />
       )}
     </div>
   );
