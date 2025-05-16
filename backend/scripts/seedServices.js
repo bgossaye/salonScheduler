@@ -18,7 +18,6 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(async () => {
   await Service.deleteMany();
   await Service.insertMany(services);
-  console.log('✅ Services successfully seeded with categories.');
   process.exit();
 })
 .catch(err => {

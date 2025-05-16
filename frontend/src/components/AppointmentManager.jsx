@@ -16,20 +16,26 @@ export default function AppointmentManager() {
       .catch(err => console.error('Failed to fetch appointments:', err));
   };
 
-  const handleAdd = async () => {
-    const newAppointment = {
-      client: 'Test Client',
-      service: 'Haircut',
-      date: new Date().toISOString(),
-      status: 'Scheduled'
-    };
-    try {
-      await axios.post('/api/appointments', newAppointment);
-      fetchAppointments();
-    } catch (err) {
-      console.error('Add failed:', err);
-    }
+  const handleAdd = async (formData) => {
+  const newAppointment = {
+    clientId: formData.clientId,
+    service: formData.service,
+    serviceId: formData.serviceId,
+    date: formData.date,
+    time: formData.time,
+    duration: formData.duration,
+    addOns: formData.addOns, // array of IDs
+    status: formData.status || 'Booked'
   };
+
+  try {
+    await axios.post('/api/appointments', newAppointment);
+    fetchAppointments();
+  } catch (err) {
+    console.error('Add failed:', err);
+  }
+};
+
 
   const handleUpdate = async (id, newStatus) => {
     try {

@@ -19,7 +19,6 @@ mongoose.connect(process.env.MONGO_URI, {
   .then(async () => {
     await StoreHours.deleteMany();
     await StoreHours.insertMany(storeHours);
-    console.log('✅ Store hours successfully seeded.');
     process.exit();
   })
   .catch(err => {
