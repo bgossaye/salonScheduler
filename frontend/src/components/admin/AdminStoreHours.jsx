@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminStoreHours() {
   const [hours, setHours] = useState([]);
@@ -9,15 +9,14 @@ export default function AdminStoreHours() {
   }, []);
 
   const fetchHours = async () => {
-    const { data } = await axios.get('/api/admin/store-hours');
+    const { data } = await API.get('/admin/store-hours');
     setHours(data);
   };
 
   const handleChange = async (day, field, value) => {
     const updatedDay = hours.find(h => h.day === day) || { day };
     updatedDay[field] = value;
-
-    await axios.put(`/api/admin/store-hours/${day}`, updatedDay);
+    await API.put(`/admin/store-hours/${day}`, updatedDay);
     fetchHours();
   };
 

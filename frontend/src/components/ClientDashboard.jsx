@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../api';
 import ServiceSelector from './ServiceSelector';
 import { toast } from 'react-toastify';
 import { confirmAlert } from 'react-confirm-alert';
@@ -12,7 +12,7 @@ export default function ClientDashboard({ client }) {
   const [confirmation, setConfirmation] = useState(null);
 
   useEffect(() => {
-    axios.get(`/api/appointments/client/${client._id}`)
+    API.get(`/appointments/client/${client._id}`)
       .then((res) => {
         const now = new Date();
         const upcoming = res.data.find(a => new Date(`${a.date} ${a.time}`) >= now);
@@ -32,8 +32,7 @@ export default function ClientDashboard({ client }) {
     if (!appointment) return;
 
     const cancelAppointment = () => {
-      axios
-        .delete(`/api/appointments/${appointment._id}`)
+      API.delete(`/appointments/${appointment._id}`)
         .then(() => {
           setAppointment(null);
           setConfirmation(null);

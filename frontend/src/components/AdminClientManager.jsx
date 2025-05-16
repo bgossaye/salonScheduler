@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../api';
 
 export default function AdminClientManager() {
   const [clients, setClients] = useState([]);
@@ -12,7 +12,7 @@ export default function AdminClientManager() {
 
   const fetchClients = async () => {
     try {
-      const res = await axios.get('/api/clients/all');
+      const res = await API.get('/clients/all');
       setClients(res.data);
     } catch (err) {
       console.error('Failed to fetch clients:', err);
@@ -21,7 +21,7 @@ export default function AdminClientManager() {
 
   const handleSave = async () => {
     try {
-      await axios.put(`/api/clients/${selectedClient._id}`, selectedClient);
+      await API.put(`/clients/${selectedClient._id}`, selectedClient);
       alert('Client updated');
       fetchClients();
       setSelectedClient(null);

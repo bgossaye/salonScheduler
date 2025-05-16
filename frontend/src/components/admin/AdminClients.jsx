@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminClients() {
   const [clients, setClients] = useState([]);
@@ -10,7 +10,7 @@ export default function AdminClients() {
   }, [search]);
 
   const fetchClients = async () => {
-    const { data } = await axios.get('/api/admin/clients', {
+    const { data } = await API.get('/admin/clients', {
       params: { search },
     });
     setClients(data);
@@ -41,7 +41,7 @@ export default function AdminClients() {
               <td className="p-2 border">{c.phone}</td>
               <td className="p-2 border">{c.email}</td>
               <td className="p-2 border">
-                <a href={'/admin/client/' + c._id} className="text-blue-600">View</a>
+                <a href={`/admin/client/${c._id}`} className="text-blue-600">View</a>
               </td>
             </tr>
           ))}

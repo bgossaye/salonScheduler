@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminServices() {
   const [services, setServices] = useState([]);
@@ -19,7 +19,7 @@ export default function AdminServices() {
   }, []);
 
   const fetchServices = async () => {
-    const { data } = await axios.get('/api/admin/services');
+    const { data } = await API.get('/admin/services');
     setServices(data);
   };
 
@@ -28,9 +28,9 @@ export default function AdminServices() {
     const payload = { ...form, steps: cleanedSteps };
 
     if (editingId) {
-      await axios.patch('/api/admin/services/' + editingId, payload);
+      await API.patch(`/admin/services/${editingId}`, payload);
     } else {
-      await axios.post('/api/admin/services', payload);
+      await API.post('/admin/services', payload);
     }
 
     setForm({ name: '', category: '', price: '', duration: '', steps: [{ name: '', duration: '' }], suggestedAddOns: [] });
@@ -40,7 +40,7 @@ export default function AdminServices() {
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure?')) {
-      await axios.delete('/api/admin/services/' + id);
+      await API.delete(`/admin/services/${id}`);
       fetchServices();
     }
   };
@@ -76,6 +76,8 @@ export default function AdminServices() {
       };
     });
   };
+
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   return (
     <div className="p-4">

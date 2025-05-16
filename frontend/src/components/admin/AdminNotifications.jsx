@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminNotifications() {
   const [reminders, setReminders] = useState([]);
@@ -12,12 +12,12 @@ export default function AdminNotifications() {
   }, []);
 
   const fetchReminders = async () => {
-    const { data } = await axios.get('/api/admin/reminders');
+    const { data } = await API.get('/admin/reminders');
     setReminders(data);
   };
 
   const saveSettings = async () => {
-    await axios.put('/api/admin/reminders/general', {
+    await API.put('/admin/reminders/general', {
       smsTemplate,
       emailTemplate,
       enabled,
@@ -31,7 +31,11 @@ export default function AdminNotifications() {
 
       <div className="mb-4 space-y-2">
         <label className="block font-medium">Enable Reminders</label>
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
       </div>
 
       <div className="mb-4 space-y-2">
@@ -54,7 +58,12 @@ export default function AdminNotifications() {
         />
       </div>
 
-      <button onClick={saveSettings} className="bg-blue-600 text-white px-4 py-2 rounded">Save Settings</button>
+      <button
+        onClick={saveSettings}
+        className="bg-blue-600 text-white px-4 py-2 rounded"
+      >
+        Save Settings
+      </button>
 
       <h3 className="text-lg font-semibold mt-6 mb-2">Scheduled Reminders</h3>
       <table className="w-full border">

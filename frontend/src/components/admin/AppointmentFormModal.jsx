@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AppointmentFormModal({ isOpen, onClose, onSave, initialData }) {
   const [form, setForm] = useState({
@@ -39,7 +39,7 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
 
   useEffect(() => {
     if (form.serviceId) {
-      axios.get(`/api/services/${form.serviceId}/addons`)
+      API.get(`/services/${form.serviceId}/addons`)
         .then(res => setSuggestedAddOns(res.data || []))
         .catch(err => console.error('Failed to load suggested add-ons', err));
     }
@@ -57,7 +57,7 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
       setForm(normalized);
 
       if (initialData.date && initialData.serviceId?._id) {
-        axios.get('/api/availability', {
+        API.get('/availability', {
           params: {
             date: initialData.date,
             serviceId: initialData.serviceId._id
@@ -74,7 +74,7 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
     const fetchAvailability = async () => {
       if (!form.date || !form.serviceId) return;
       try {
-        const { data } = await axios.get('/api/availability', {
+        const { data } = await API.get('/availability', {
           params: { date: form.date, serviceId: form.serviceId }
         });
         setAvailableTimes(data);
@@ -87,12 +87,12 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
   }, [form.date, form.serviceId]);
 
   const fetchClients = async () => {
-    const { data } = await axios.get('/api/admin/clients');
+    const { data } = await API.get('/admin/clients');
     setClients(data);
   };
 
   const fetchServices = async () => {
-    const { data } = await axios.get('/api/admin/services');
+    const { data } = await API.get('/admin/services');
     setServices(data);
   };
 

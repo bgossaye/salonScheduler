@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import API from '../../api';
 
 export default function AdminReports() {
   const [report, setReport] = useState(null);
@@ -9,7 +9,7 @@ export default function AdminReports() {
   }, []);
 
   const fetchReport = async () => {
-    const { data } = await axios.get('/api/admin/reports/summary');
+    const { data } = await API.get('/admin/reports/summary');
     setReport(data);
   };
 

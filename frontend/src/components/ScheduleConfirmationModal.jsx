@@ -44,3 +44,4 @@ export default function ScheduleConfirmationModal({ suggestedAddOns, onClose, on
     </div>
   );
 }
+
