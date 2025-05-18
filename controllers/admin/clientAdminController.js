@@ -1,5 +1,5 @@
-const Client = require('../../models/Client');
-const Appointment = require('../../models/Appointment');
+const Client = require('../../models/client');
+const Appointment = require('../../models/appointment');
 
 // Get all clients with optional search
 exports.getClients = async (req, res) => {

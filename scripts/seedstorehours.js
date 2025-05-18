@@ -1,6 +1,6 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
-const StoreHours = require('../models/StoreHours');
+const StoreHours = require('../models/Storehours');
 
 const storeHours = [
   { day: 'Sunday', open: '10:00', close: '16:00' },

@@ -1,5 +1,5 @@
-const Appointment = require('../models/Appointment');
-const Service = require('../models/Service');
+const Appointment = require('../models/appointment');
+const Service = require('../models/service');
 
 exports.getAvailability = async (req, res) => {
   try {

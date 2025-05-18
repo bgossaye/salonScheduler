@@ -1,4 +1,4 @@
-const StoreHours = require('../../models/StoreHours');
+const StoreHours = require('../../models/storehours');
 
 // Get store hours
 exports.getStoreHours = async (req, res) => {

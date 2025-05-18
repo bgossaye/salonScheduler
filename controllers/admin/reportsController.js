@@ -1,6 +1,6 @@
-const Appointment = require('../../models/Appointment');
-const Service = require('../../models/Service');
-const Client = require('../../models/Client');
+const Appointment = require('../../models/appointment');
+const Service = require('../../models/service');
+const Client = require('../../models/client');
 
 exports.getSummaryReport = async (req, res) => {
   try {
