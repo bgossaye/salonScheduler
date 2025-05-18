@@ -45,14 +45,14 @@ const adminAuth = require('./routes/admin/auth');
 const adminReports = require('./routes/admin/reports');
 const adminExport = require('./routes/admin/export');
 
-app.use('/api/admin/appointments', adminappointments);
-app.use('/api/admin/clients', adminclients);
-app.use('/api/admin/services', adminservices);
-app.use('/api/admin/store-hours', adminstoreHours);
-app.use('/api/admin/reminders', adminreminders);
-app.use('/api/admin/login', adminauth);
-app.use('/api/admin/reports', adminreports);
-app.use('/api/admin/export', adminexport);
+app.use('/api/admin/appointments', adminAppointments);
+app.use('/api/admin/clients', adminClients);
+app.use('/api/admin/services', adminServices);
+app.use('/api/admin/store-hours', adminStoreHours);
+app.use('/api/admin/reminders', adminReminders);
+app.use('/api/admin/login', adminAuth);
+app.use('/api/admin/reports', adminReports);
+app.use('/api/admin/export', adminExport);
 
 // ✅ Friendly root message
 app.get('/', (req, res) => {
