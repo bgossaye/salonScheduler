@@ -1,4 +1,4 @@
-const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/clientAdminController');
+const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/clientadmincontroller');
 
 router.get('/', controller.getClients);
 router.get('/:id', controller.getClientDetails);
