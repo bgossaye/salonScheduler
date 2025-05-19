@@ -54,6 +54,14 @@ app.use('/api/admin/login', adminAuth);
 app.use('/api/admin/reports', adminReports);
 app.use('/api/admin/export', adminExport);
 
+const cors = require('cors');
+
+// ✅ needed for LIVE
+app.use(cors({
+  origin: ['https://rakiesalon.com', 'https://www.rakiesalon.com'], // Add your real IONOS frontend domain
+  credentials: true
+}));
+
 // ✅ Friendly root message
 app.get('/', (req, res) => {
   res.send('👋 Welcome to the Rakie Salon API. The server is running!');
