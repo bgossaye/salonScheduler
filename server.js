@@ -14,7 +14,11 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
 .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // ✅ Middleware
-app.use(cors());
+//app.use(cors()); test to accept all
+app.use(cors({
+  origin: ['https://rakiesalon.com', 'https://www.rakiesalon.com'], // Add your real IONOS frontend domain
+  credentials: true
+}));
 app.use(express.json());
 
 app.use('/uploads', express.static('uploads'));
@@ -54,13 +58,6 @@ app.use('/api/admin/login', adminAuth);
 app.use('/api/admin/reports', adminReports);
 app.use('/api/admin/export', adminExport);
 
-const cors = require('cors');
-
-// ✅ needed for LIVE
-app.use(cors({
-  origin: ['https://rakiesalon.com', 'https://www.rakiesalon.com'], // Add your real IONOS frontend domain
-  credentials: true
-}));
 
 // ✅ Friendly root message
 app.get('/', (req, res) => {
