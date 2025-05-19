@@ -21,11 +21,11 @@ app.use('/uploads', express.static('uploads'));
 
 
 // ✅ Public Routes
-const clientRoutes =      require('./routes/client/clients');
-const appointmentRoutes = require('./routes/client/appointments');
-const serviceRoutes =     require('./routes/client/services');
-const availabilityRoutes = require('./routes/shared/availability');
-const schedulingRoutes = require('./routes/schedulingroutes');
+const clientRoutes =      require('./src/routes/client/clients');
+const appointmentRoutes = require('./src/routes/client/appointments');
+const serviceRoutes =     require('./src/routes/client/services');
+const availabilityRoutes = require('./src/routes/shared/availability');
+const schedulingRoutes = require('./src/routes/schedulingroutes');
 
 // Use the route
 app.use('/api/clients', clientRoutes);
@@ -36,14 +36,14 @@ app.use('/api/schedule', schedulingRoutes);
 
 
 // ✅ Admin Routes
-const adminAppointments = require('./routes/admin/appointments');
-const adminClients = require('./routes/admin/clients');
-const adminServices = require('./routes/admin/services');
-const adminStoreHours = require('./routes/admin/storehours');
-const adminReminders = require('./routes/admin/reminders');
-const adminAuth = require('./routes/admin/auth');
-const adminReports = require('./routes/admin/reports');
-const adminExport = require('./routes/admin/export');
+const adminAppointments = require('./src/routes/admin/appointments');
+const adminClients = require('./src/routes/admin/clients');
+const adminServices = require('./src/routes/admin/services');
+const adminStoreHours = require('./src/routes/admin/storehours');
+const adminReminders = require('./src/routes/admin/reminders');
+const adminAuth = require('./src/routes/admin/auth');
+const adminReports = require('./src/routes/admin/reports');
+const adminExport = require('./src/routes/admin/export');
 
 app.use('/api/admin/appointments', adminAppointments);
 app.use('/api/admin/clients', adminClients);
