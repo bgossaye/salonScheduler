@@ -14,18 +14,32 @@ mongoose.connection.on('error', err => {
   console.error('❗ Mongoose connection error:', err);
 });
 
-// ✅ Async startup block
+// ✅ Retry logic for MongoDB connection
+const connectWithRetry = async (retries = 5, delay = 5000) => {
+  while (retries) {
+    try {
+      console.log("Connecting to MongoDB...");
+      await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        serverSelectionTimeoutMS: 10000 // 10 seconds timeout per attempt
+      });
+      console.log('✅ MongoDB connected');
+      return;
+    } catch (err) {
+      console.error(`❌ MongoDB connection failed. Retries left: ${retries - 1}`);
+      console.error(err.message);
+      retries--;
+      if (!retries) throw err;
+      await new Promise(res => setTimeout(res, delay));
+    }
+  }
+};
+
 (async () => {
   try {
     console.log("ENV VARS (DEBUG):", process.env);
-    console.log("Connecting to MongoDB...");
-
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
-
-    console.log('✅ MongoDB connected');
+    await connectWithRetry();
 
     // ✅ Middleware
     app.use(cors({
