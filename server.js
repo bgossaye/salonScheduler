@@ -76,6 +76,16 @@ const connectWithRetry = async (retries = 5, delay = 5000) => {
     app.get('/', (req, res) => {
       res.send('👋 Welcome to the Rakie Salon API. The server is running!');
     });
+//wake up mongo
+app.get('/api/ping', async (req, res) => {
+  try {
+    await mongoose.connection.db.admin().ping();
+    res.send('MongoDB connection active');
+  } catch (err) {
+    console.error('❌ MongoDB ping failed:', err);
+    res.status(500).send('MongoDB not reachable');
+  }
+});
 
     // ✅ Start server only after DB connection
     const PORT = process.env.PORT || 5000;
