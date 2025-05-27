@@ -5,12 +5,7 @@
   "homepage": "https://rakiesalon.com/booking",
   "scripts": {
     "start": "react-scripts start",
-    "start:live": "cross-env REACT_APP_API_URL=https://rakie-backend.onrender.com/api react-scripts start",
     "build": "cross-env NODE_ENV=production react-scripts build",
-    "build:live": "cross-env REACT_APP_API_URL=https://rakie-backend.onrender.com/api react-scripts build",
-    "build:local": "cross-env REACT_APP_API_URL=http://localhost:5000/api react-scripts build",
-    "start:all": "concurrently \"npm run server\" \"npm start\"",
-    "server": "cd ../backend && nodemon server.js",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -44,7 +39,6 @@
     ]
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
     "cross-env": "^7.0.3"
   }
 }

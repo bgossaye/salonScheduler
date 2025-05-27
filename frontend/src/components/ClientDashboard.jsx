@@ -1,142 +1,113 @@
-import React, { useState, useEffect } from 'react';
+// Cleanly built ClientDashboard.jsx according to updated spec
+import React, { useEffect, useState } from 'react';
 import API from '../api';
-import ServiceSelector from './ServiceSelector';
 import { toast } from 'react-toastify';
-import { confirmAlert } from 'react-confirm-alert';
-import 'react-confirm-alert/src/react-confirm-alert.css';
+import logo from '../assets/RSlogo.jpg';
 
 export default function ClientDashboard({ client }) {
-  const [appointment, setAppointment] = useState(null);
-  const [pastAppointment, setPastAppointment] = useState(null);
-  const [editing, setEditing] = useState(false);
-  const [confirmation, setConfirmation] = useState(null);
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!client) return;
     API.get(`/appointments/client/${client._id}`)
       .then((res) => {
-        const now = new Date();
-        const upcoming = res.data.find(a => new Date(`${a.date} ${a.time}`) >= now);
-        const past = res.data
-          .filter(a => new Date(`${a.date} ${a.time}`) < now)
-          .sort((a, b) => new Date(`${b.date} ${b.time}`) - new Date(`${a.date} ${a.time}`))[0];
-
-        setAppointment(upcoming || null);
-        setPastAppointment(past || null);
+        setAppointments(Array.isArray(res.data) ? res.data : []);
+        setLoading(false);
       })
-      .catch(err => {
-        console.error('❌ Error fetching client appointments:', err);
+      .catch((err) => {
+        console.error("❌ Failed to fetch appointments:", err);
+        toast.error('Failed to fetch appointments');
+        setLoading(false);
       });
-  }, [client._id]);
+  }, [client]);
 
-  const handleCancel = () => {
-    if (!appointment) return;
-
-    const cancelAppointment = () => {
-      API.delete(`/appointments/${appointment._id}`)
-        .then(() => {
-          setAppointment(null);
-          setConfirmation(null);
-          toast.success('✅ Appointment cancelled.');
-        })
-        .catch(err => {
-          console.error('❌ Cancel failed:', err);
-          toast.error('❌ Failed to cancel appointment.');
-        });
-    };
-
-    confirmAlert({
-      title: 'Cancel Appointment',
-      message: 'Are you sure you want to cancel this appointment?',
-      buttons: [
-        { label: 'Yes', onClick: cancelAppointment },
-        { label: 'No', onClick: () => toast.info('❎ Appointment not cancelled.') }
-      ]
-    });
+  const handleCancel = async (id) => {
+    try {
+      await API.delete(`/appointments/${id}`);
+      setAppointments(prev => prev.filter(appt => appt._id !== id));
+      toast.success('Appointment canceled');
+    } catch (err) {
+      console.error("❌ Failed to cancel appointment:", err);
+      toast.error('Failed to cancel appointment');
+    }
   };
 
-  const handleBooked = (newAppt) => {
-    setAppointment(newAppt);
-    setConfirmation(newAppt);
-    setEditing(false);
+  const handleEdit = (appointment) => {
+    sessionStorage.setItem('editingAppointment', JSON.stringify(appointment));
+    window.location.href = '/booking/schedule';
   };
 
-  const formatDateTime = (date, time) => {
-    return new Date(`${date} ${time}`).toLocaleString();
+  const handleExit = () => {
+    window.location.href = 'https://rakiesalon.com';
+  };
+const handleRebook = () => {
+        window.location.href = '/booking/schedule';
   };
 
-  const renderAddOns = (addOns) => {
-    return Array.isArray(addOns) && addOns.length > 0
-      ? addOns.filter(a => a && a.name).map(a => a.name).join(', ')
-      : null;
-  };
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
-      <h1><b>Welcome, {client?.fullName || 'Guest'}</b></h1>
+    <div className="min-h-screen bg-gray-100 p-4">
+      <header className="flex justify-between items-right mb-4">
+        <img src={logo} alt="Rakie Salon Logo" className="h-12" />
+<div className="text-right mb-6">
+  <h2 className="text-2xl font-semibold">Welcome back, {client?.fullName}</h2>
+  <button
+    onClick={() => {
+      sessionStorage.clear();
+      window.location.href = '/booking';
+    }}
+    className="mt-1 text-sm text-blue-600 underline hover:text-blue-800"
+  >
+    Not you?
+  </button>
+</div>
 
-      {confirmation && (
-        <div className="border border-green-400 bg-green-50 rounded shadow-md p-6">
-          <h2 className="text-xl font-semibold text-green-700 mb-3">Appointment Confirmed ✅</h2>
-          <p className="text-lg"><strong>Service:</strong> {confirmation.service}</p>
-          {renderAddOns(confirmation.addOns) && (
-            <p className="text-lg"><strong>Add-ons:</strong> {renderAddOns(confirmation.addOns)}</p>
-          )}
-          <p className="text-lg"><strong>Date & Time:</strong> {formatDateTime(confirmation.date, confirmation.time)}</p>
-        </div>
-      )}
+        <button
+          onClick={handleExit}
+          className="text-sm text-blue-500 hover:underline"
+        >
+          Exit
+        </button>
+      </header>
 
-      {appointment && !editing && (
-        <div className="border rounded shadow-md p-6 bg-gray-50 space-y-3">
-          <h2 className="text-lg font-semibold">Upcoming Appointment</h2>
-          <p><strong>Service:</strong> {appointment.service}</p>
-          {renderAddOns(appointment.addOns) && (
-            <p><strong>Add-ons:</strong> {renderAddOns(appointment.addOns)}</p>
-          )}
-          <p><strong>Date & Time:</strong> {formatDateTime(appointment.date, appointment.time)}</p>
-          <p><strong>Status:</strong> {appointment.status}</p>
-          <button
-            onClick={() => window.location.href = 'https://rakiesalon.com'}
-            className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-lg"
-          >
-            Done
-          </button>
-          <div className="flex gap-3 mt-4">
-            <button
-              onClick={() => setEditing(true)}
-              className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded"
-            >
-              Edit My Appointment
-            </button>
-            <button
-              onClick={handleCancel}
-              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
-            >
-              Cancel My Appointment
-            </button>
+      {loading ? (
+        <p>Loading appointments...</p>
+      ) : appointments.length > 0 ? (
+        appointments.map((appt) => (
+          <div key={appt._id} className="bg-white shadow-md rounded p-4 mb-4">
+            <p><strong>Service:</strong> {appt.service}</p>
+            <p><strong>Date:</strong> {appt.date}</p>
+            <p><strong>Time:</strong> {appt.time}</p>
+            {appt.addOns?.length > 0 && (
+              <p><strong>Add-ons:</strong> {appt.addOns.map(a => a.name).join(', ')}</p>
+            )}
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => handleEdit(appt)} className="bg-blue-500 text-white px-4 py-2 rounded">Edit</button>
+              <button onClick={() => handleCancel(appt._id)} className="bg-red-500 text-white px-4 py-2 rounded">Cancel</button>
+              <button onClick={handleExit} className="bg-gray-500 text-white px-4 py-2 rounded">Exit</button>
+            </div>
           </div>
-        </div>
+        ))
+      ) : (
+        <div className="bg-white shadow-md rounded p-4 text-center">
+  <p className="mb-4">You have no upcoming appointments.</p>
+  <div className="flex justify-center gap-4">
+    <button onClick={() => handleRebook()} className="bg-blue-500 text-white px-4 py-2 rounded">
+      Rebook
+    </button>
+    <button onClick={handleExit} className="bg-gray-500 text-white px-4 py-2 rounded">
+      Exit
+    </button>
+  </div>
+</div>
       )}
 
-      {(!appointment || editing) && (
-        <div>
-          <p className="mb-3 text-gray-600">
-            {appointment ? 'Edit your appointment below:' : 'No appointment found. Please book one.'}
-          </p>
-          <ServiceSelector client={client} onBooked={handleBooked} />
-        </div>
-      )}
-
-      {pastAppointment && (
-        <div className="border rounded shadow-md p-4 bg-gray-100 text-sm">
-          <h2 className="font-semibold mb-1">Last Visit</h2>
-          <p><strong>Service:</strong> {pastAppointment.service}</p>
-          {renderAddOns(pastAppointment.addOns) && (
-            <p><strong>Add-ons:</strong> {renderAddOns(pastAppointment.addOns)}</p>
-          )}
-          <p><strong>Date & Time:</strong> {formatDateTime(pastAppointment.date, pastAppointment.time)}</p>
-          <p><strong>Status:</strong> {pastAppointment.status}</p>
-        </div>
-      )}
+      <img
+        src={logo}
+        alt="Rakie Salon Logo"
+        className="fixed bottom-4 right-4 w-16 h-16 opacity-30 pointer-events-none"
+      />
     </div>
   );
 }

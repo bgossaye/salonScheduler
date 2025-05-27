@@ -3,14 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "homepage": "https://rakiesalon.com/booking",
+  "proxy": "http://localhost:5000",
   "scripts": {
-    "start": "react-scripts start",
-    "start:live": "cross-env REACT_APP_API_URL=https://rakie-backend.onrender.com/api react-scripts start",
-    "build": "cross-env NODE_ENV=production react-scripts build",
-    "build:live": "cross-env REACT_APP_API_URL=https://rakie-backend.onrender.com/api react-scripts build",
-    "build:local": "cross-env REACT_APP_API_URL=http://localhost:5000/api react-scripts build",
-    "start:all": "concurrently \"npm run server\" \"npm start\"",
-    "server": "cd ../backend && nodemon server.js",
+    "start": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts start",
+    "build": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -42,9 +38,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "devDependencies": {
-    "concurrently": "^8.2.2",
-    "cross-env": "^7.0.3"
   }
 }
