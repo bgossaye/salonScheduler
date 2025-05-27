@@ -6,7 +6,11 @@ const cors = require('cors');
 const app = express();
 
 // ✅ Define CORS whitelist
-const allowedOrigins = ['https://rakiesalon.com', 'https://www.rakiesalon.com'];
+const allowedOrigins = [
+  'https://rakiesalon.com',
+  'https://www.rakiesalon.com',
+  'http://localhost:3000'
+];
 
 // ✅ Mongoose setup
 mongoose.set('bufferCommands', false);
