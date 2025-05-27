@@ -58,6 +58,8 @@ const connectWithRetry = async (retries = 5, delay = 5000) => {
 
     app.use(express.json());
     app.use('/uploads', express.static('uploads'));
+    app.use('/api/ping', require('./routes/ping'));
+
 
     // ✅ Public Routes
     app.use('/api/clients', require('./routes/client/clients'));
