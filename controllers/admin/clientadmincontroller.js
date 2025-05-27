@@ -59,3 +59,12 @@ exports.uploadClientPhoto = async (req, res) => {
     res.status(500).json({ error: 'Failed to upload image' });
   }
 };
+exports.deleteClient = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Client.findByIdAndDelete(id);
+    res.status(200).json({ message: 'Client deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete client' });
+  }
+};

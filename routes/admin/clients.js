@@ -1,8 +1,10 @@
+
 const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/clientadmincontroller');
 
 router.get('/', controller.getClients);
 router.get('/:id', controller.getClientDetails);
 router.patch('/:id', controller.updateClient);
+router.delete('/:id', controller.deleteClient);
 
 const multer = require('multer');
 const path = require('path');
