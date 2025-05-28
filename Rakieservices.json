@@ -1,0 +1,554 @@
+[
+  {
+    "category": "Color",
+    "name": "Balayage With Toner",
+    "price": 160.0,
+    "duration": 120,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 24
+      },
+      {
+        "name": "Wait",
+        "duration": 24
+      },
+      {
+        "name": "Wash",
+        "duration": 24
+      },
+      {
+        "name": "Dry",
+        "duration": 24
+      },
+      {
+        "name": "Style",
+        "duration": 24
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Balayage, Toner With Style",
+    "price": 200.0,
+    "duration": 150,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 30
+      },
+      {
+        "name": "Wait",
+        "duration": 30
+      },
+      {
+        "name": "Wash",
+        "duration": 30
+      },
+      {
+        "name": "Dry",
+        "duration": 30
+      },
+      {
+        "name": "Style",
+        "duration": 30
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Color Single Process",
+    "price": 60.0,
+    "duration": 60,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 20
+      },
+      {
+        "name": "Wait",
+        "duration": 20
+      },
+      {
+        "name": "Wash",
+        "duration": 20
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Color Single Process With Style",
+    "price": 100.0,
+    "duration": 90,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 22
+      },
+      {
+        "name": "Wait",
+        "duration": 22
+      },
+      {
+        "name": "Wash",
+        "duration": 22
+      },
+      {
+        "name": "Style",
+        "duration": 22
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Face Frame Highlights (Accent)",
+    "price": 40.0,
+    "duration": 45,
+    "steps": [
+      {
+        "name": "Foil",
+        "duration": 15
+      },
+      {
+        "name": "Process",
+        "duration": 15
+      },
+      {
+        "name": "Wash",
+        "duration": 15
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Face Frame Highlight (Accent) With Style",
+    "price": 80.0,
+    "duration": 75,
+    "steps": [
+      {
+        "name": "Foil",
+        "duration": 18
+      },
+      {
+        "name": "Process",
+        "duration": 18
+      },
+      {
+        "name": "Wash",
+        "duration": 18
+      },
+      {
+        "name": "Style",
+        "duration": 18
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Full Highlights",
+    "price": 125.0,
+    "duration": 120,
+    "steps": [
+      {
+        "name": "Foil",
+        "duration": 30
+      },
+      {
+        "name": "Process",
+        "duration": 30
+      },
+      {
+        "name": "Wash",
+        "duration": 30
+      },
+      {
+        "name": "Dry",
+        "duration": 30
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Full Highlight With Style",
+    "price": 145.0,
+    "duration": 135,
+    "steps": [
+      {
+        "name": "Foil",
+        "duration": 27
+      },
+      {
+        "name": "Process",
+        "duration": 27
+      },
+      {
+        "name": "Wash",
+        "duration": 27
+      },
+      {
+        "name": "Dry",
+        "duration": 27
+      },
+      {
+        "name": "Style",
+        "duration": 27
+      }
+    ]
+  },
+  {
+    "category": "Color",
+    "name": "Eye Brow Tent",
+    "price": 15.0,
+    "duration": 15,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 7
+      },
+      {
+        "name": "Set",
+        "duration": 7
+      }
+    ]
+  },
+  {
+    "category": "Haircut",
+    "name": "Bang Trim",
+    "price": 12.0,
+    "duration": 15,
+    "steps": [
+      {
+        "name": "Trim",
+        "duration": 15
+      }
+    ]
+  },
+  {
+    "category": "Haircut",
+    "name": "Children Haircut",
+    "price": 20.0,
+    "duration": 30,
+    "steps": [
+      {
+        "name": "Cut",
+        "duration": 15
+      },
+      {
+        "name": "Blow-dry",
+        "duration": 15
+      }
+    ]
+  },
+  {
+    "category": "Haircut",
+    "name": "Haircut Blow-dry",
+    "price": 50.0,
+    "duration": 45,
+    "steps": [
+      {
+        "name": "Cut",
+        "duration": 22
+      },
+      {
+        "name": "Blow-dry",
+        "duration": 22
+      }
+    ]
+  },
+  {
+    "category": "Haircut",
+    "name": "Men's Haircut",
+    "price": 40.0,
+    "duration": 30,
+    "steps": [
+      {
+        "name": "Cut",
+        "duration": 15
+      },
+      {
+        "name": "Style",
+        "duration": 15
+      }
+    ]
+  },
+  {
+    "category": "Style",
+    "name": "Blow-Dry Style",
+    "price": 40.0,
+    "duration": 45,
+    "steps": [
+      {
+        "name": "Wash",
+        "duration": 15
+      },
+      {
+        "name": "Dry",
+        "duration": 15
+      },
+      {
+        "name": "Style",
+        "duration": 15
+      }
+    ]
+  },
+  {
+    "category": "Style",
+    "name": "Flat Twist And Spiral Curl",
+    "price": 40.0,
+    "duration": 60,
+    "steps": [
+      {
+        "name": "Part",
+        "duration": 20
+      },
+      {
+        "name": "Twist",
+        "duration": 20
+      },
+      {
+        "name": "Curl",
+        "duration": 20
+      }
+    ]
+  },
+  {
+    "category": "Style",
+    "name": "Ponytail",
+    "price": 40.0,
+    "duration": 30,
+    "steps": [
+      {
+        "name": "Smooth",
+        "duration": 15
+      },
+      {
+        "name": "Secure",
+        "duration": 15
+      }
+    ]
+  },
+  {
+    "category": "Style",
+    "name": "Wash And Set And Flat",
+    "price": 65.0,
+    "duration": 75,
+    "steps": [
+      {
+        "name": "Wash",
+        "duration": 25
+      },
+      {
+        "name": "Set",
+        "duration": 25
+      },
+      {
+        "name": "Flat Iron",
+        "duration": 25
+      }
+    ]
+  },
+  {
+    "category": "Treatment",
+    "name": "Deep Conditioning",
+    "price": 40.0,
+    "duration": 30,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 10
+      },
+      {
+        "name": "Steam",
+        "duration": 10
+      },
+      {
+        "name": "Rinse",
+        "duration": 10
+      }
+    ]
+  },
+  {
+    "category": "Treatment",
+    "name": "Rejuvenating Treatment",
+    "price": 35.0,
+    "duration": 30,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 10
+      },
+      {
+        "name": "Massage",
+        "duration": 10
+      },
+      {
+        "name": "Rinse",
+        "duration": 10
+      }
+    ]
+  },
+  {
+    "category": "Treatment",
+    "name": "Steam Treatment",
+    "price": 25.0,
+    "duration": 20,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 10
+      },
+      {
+        "name": "Steam",
+        "duration": 10
+      }
+    ]
+  },
+  {
+    "category": "Texturizing",
+    "name": "Hair Relaxer With Style",
+    "price": 80.0,
+    "duration": 90,
+    "steps": [
+      {
+        "name": "Relax",
+        "duration": 30
+      },
+      {
+        "name": "Rinse",
+        "duration": 30
+      },
+      {
+        "name": "Style",
+        "duration": 30
+      }
+    ]
+  },
+  {
+    "category": "Texturizing",
+    "name": "Hair Relaxing",
+    "price": 60.0,
+    "duration": 60,
+    "steps": [
+      {
+        "name": "Relax",
+        "duration": 30
+      },
+      {
+        "name": "Rinse",
+        "duration": 30
+      }
+    ]
+  },
+  {
+    "category": "Texturizing",
+    "name": "Spiral Perm",
+    "price": 65.0,
+    "duration": 90,
+    "steps": [
+      {
+        "name": "Wrap",
+        "duration": 30
+      },
+      {
+        "name": "Process",
+        "duration": 30
+      },
+      {
+        "name": "Rinse",
+        "duration": 30
+      }
+    ]
+  },
+  {
+    "category": "Hair Removal",
+    "name": "Chin Wax",
+    "price": 10.0,
+    "duration": 15,
+    "steps": [
+      {
+        "name": "Cleanse",
+        "duration": 7
+      },
+      {
+        "name": "Wax",
+        "duration": 7
+      }
+    ]
+  },
+  {
+    "category": "Hair Removal",
+    "name": "Eyebrows Wax",
+    "price": 10.0,
+    "duration": 15,
+    "steps": [
+      {
+        "name": "Shape",
+        "duration": 7
+      },
+      {
+        "name": "Wax",
+        "duration": 7
+      }
+    ]
+  },
+  {
+    "category": "Hair Removal",
+    "name": "Lip Wax",
+    "price": 10.0,
+    "duration": 15,
+    "steps": [
+      {
+        "name": "Cleanse",
+        "duration": 7
+      },
+      {
+        "name": "Wax",
+        "duration": 7
+      }
+    ]
+  },
+  {
+    "category": "Hair Removal",
+    "name": "Underarms Wax",
+    "price": 15.0,
+    "duration": 20,
+    "steps": [
+      {
+        "name": "Cleanse",
+        "duration": 10
+      },
+      {
+        "name": "Wax",
+        "duration": 10
+      }
+    ]
+  },
+  {
+    "category": "Add-ons",
+    "name": "Blow-Dry",
+    "price": 35.0,
+    "duration": 30,
+    "steps": [
+      {
+        "name": "Dry",
+        "duration": 30
+      }
+    ]
+  },
+  {
+    "category": "Add-ons",
+    "name": "Tone",
+    "price": 20.0,
+    "duration": 20,
+    "steps": [
+      {
+        "name": "Apply",
+        "duration": 10
+      },
+      {
+        "name": "Rinse",
+        "duration": 10
+      }
+    ]
+  }
+]

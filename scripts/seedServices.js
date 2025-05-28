@@ -1,6 +1,6 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
-const Service = require('../models/service');
+const Service = require('../models/Service');
 
 const services = [
   { category: 'Hair', name: 'Braids', price: 85, duration: 120 },

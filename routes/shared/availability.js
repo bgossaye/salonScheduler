@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const Appointment = require('../../models/appointment');
-const Service = require('../../models/service');
-const StoreHours = require('../../models/storehours');
+const Appointment = require('../../models/Appointment');
+const Service = require('../../models/Service');
+const StoreHours = require('../../models/StoreHours');
 
-const availabilityController = require('../../controllers/availabilitycontroller');
+const availabilityController = require('../../controllers/availabilityController');
 
 router.get('/', availabilityController.getAvailability);
 

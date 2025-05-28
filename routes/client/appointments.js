@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Appointment = require('../../models/appointment');
+const Appointment = require('../../models/Appointment');
 
 // ✅ GET /api/appointments/client/:id
 router.get('/client/:id', async (req, res) => {

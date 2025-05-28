@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Service = require('../../models/service'); // already present
+const Service = require('../../models/Service'); // already present
 
 // EXISTING route
 router.get('/', async (req, res) => {

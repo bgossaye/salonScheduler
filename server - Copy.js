@@ -18,9 +18,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/uploads', express.static('uploads'));
-app.get('/api/ping', (req, res) => {
-  res.status(200).send('pong');
-});
+
 
 // ✅ Public Routes
 const clientRoutes =      require('./routes/client/clients');
