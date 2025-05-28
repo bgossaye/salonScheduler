@@ -1,8 +1,6 @@
-const express = require('express'); 
-const router = express.Router(); 
-const controller = require('../../controllers/admin/clientAdminController');
 
-router.post('/', controller.createClient);
+const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/clientadmincontroller');
+
 router.get('/', controller.getClients);
 router.get('/:id', controller.getClientDetails);
 router.patch('/:id', controller.updateClient);

@@ -1,4 +1,4 @@
-const Reminder = require('../../models/reminder');
+const Reminder = require('../../models/Reminder');
 
 // Get all scheduled reminders
 exports.getReminders = async (req, res) => {

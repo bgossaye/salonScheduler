@@ -1,4 +1,4 @@
-const Service = require('../models/service');
+const Service = require('../models/Service');
 
 exports.getSuggestedAddOns = async (req, res) => {
   try {

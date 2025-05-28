@@ -1,4 +1,4 @@
-const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/authadmincontroller');
+const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/authAdminController');
 
 router.post('/', controller.login);
 // router.post('/register', controller.register); // Optional
