@@ -47,9 +47,9 @@ function App() {
     setClient(data);
   };
 
-  if (!client) {
-  return <div className="p-6 text-center text-gray-600">Loading client info...</div>;
-}
+  //if (!client) {
+  //return <div className="p-6 text-center text-gray-600">Loading client info...</div>;
+	//}
 
 return (
     <div className="min-h-screen bg-gray-100">

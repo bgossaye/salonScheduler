@@ -13,6 +13,24 @@ export default function ClientWelcome({ client, onClientLoaded }) {
     API.get('/ping')
       .then(() => console.log('✅ MongoDB awake'))
       .catch(err => console.warn('⚠️ MongoDB wake-up failed:', err));
+
+  const saved = localStorage.getItem('client');
+  console.log("📦 Raw client from storage:", saved);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      console.log("✅ Parsed client:", parsed);
+      if (parsed && parsed._id && parsed.fullName) {
+        setClient(parsed);
+      } else {
+        console.warn("⚠️ Incomplete client object:", parsed);
+        localStorage.removeItem('client');
+      }
+    } catch (e) {
+      console.error("❌ JSON parse failed", e);
+      localStorage.removeItem('client');
+    }
+  }
   }, []);
 
   useEffect(() => {

@@ -101,7 +101,7 @@ export default function ServiceSelector({ client }) {
   const handleNotYou = () => {
     localStorage.removeItem('client');
     sessionStorage.removeItem('clientData');
-    window.location.href = '/booking/welcome';
+    window.location.href = '/booking';
   };
 
   return (

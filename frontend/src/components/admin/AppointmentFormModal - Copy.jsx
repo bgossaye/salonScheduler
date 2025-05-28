@@ -1,10 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import API from '../../api';
-import { toast } from 'react-toastify';
 
 export default function AppointmentFormModal({ isOpen, onClose, onSave, initialData }) {
-  const phoneInputRef = useRef(null);
-
   const [form, setForm] = useState({
     clientId: '',
     serviceId: '',
@@ -19,24 +16,26 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
   const [availableTimes, setAvailableTimes] = useState([]);
   const [suggestedAddOns, setSuggestedAddOns] = useState([]);
   const [error, setError] = useState('');
-  const [addingClient, setAddingClient] = useState(false);
-  const [newClient, setNewClient] = useState({ firstName: '', lastName: '', phone: '', email: '' });
-  const [phoneSearch, setPhoneSearch] = useState('');
-  const [duplicatePhone, setDuplicatePhone] = useState(false);
-  const [matchedClient, setMatchedClient] = useState(null);
 
   const resetForm = () => {
-    setForm({ clientId: '', serviceId: '', date: '', time: '', duration: 60, status: 'booked', addOns: [] });
+    setForm({
+      clientId: '',
+      serviceId: '',
+      date: '',
+      time: '',
+      duration: 60,
+      status: 'booked',
+      addOns: []
+    });
     setAvailableTimes([]);
     setSuggestedAddOns([]);
     setError('');
-    setAddingClient(false);
-    setNewClient({ firstName: '', lastName: '', phone: '', email: '' });
-    setPhoneSearch('');
-    setMatchedClient(null);
   };
 
-  useEffect(() => { fetchClients(); fetchServices(); }, []);
+  useEffect(() => {
+    fetchClients();
+    fetchServices();
+  }, []);
 
   useEffect(() => {
     if (form.serviceId) {
@@ -45,12 +44,6 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
         .catch(err => console.error('Failed to load suggested add-ons', err));
     }
   }, [form.serviceId]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => phoneInputRef.current?.focus(), 100);
-    }
-  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen && initialData) {
@@ -105,51 +98,47 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+
     setForm((prev) => {
       const isServiceChange = name === 'serviceId';
       const isDateChange = name === 'date';
+
       return {
         ...prev,
         [name]: value,
         time: isServiceChange || isDateChange ? '' : prev.time,
-        duration: isServiceChange ? services.find((s) => s._id === value)?.duration || prev.duration : prev.duration,
-        service: isServiceChange ? services.find((s) => s._id === value)?.name || prev.service : prev.service
+        duration: isServiceChange
+          ? services.find((s) => s._id === value)?.duration || prev.duration
+          : prev.duration,
+        service: isServiceChange
+          ? services.find((s) => s._id === value)?.name || prev.service
+          : prev.service
       };
     });
-  };
-
-  const handlePhoneSearch = () => {
-    if (!/^[0-9]{10}$/.test(phoneSearch)) {
-      toast.error("Please enter a valid 10-digit phone number.");
-      return;
-    }
-    const match = clients.find(c => c.phone === phoneSearch);
-    if (match) {
-      setForm(prev => ({ ...prev, clientId: match._id }));
-      setMatchedClient(match);
-      toast.success("Client found and selected.");
-    } else {
-      if (window.confirm("No client found with that phone number. Would you like to create one?")) {
-        setNewClient(prev => ({ ...prev, phone: phoneSearch }));
-        setAddingClient(true);
-        setMatchedClient(null);
-      } else {
-        toast.info("No client selected.");
-      }
-    }
   };
 
   const handleAddOnToggle = (addOnId) => {
     setForm(prev => {
       const exists = prev.addOns.includes(addOnId);
-      const updatedAddOns = exists ? prev.addOns.filter(id => id !== addOnId) : [...prev.addOns, addOnId];
-      const totalAddOnDuration = suggestedAddOns.filter(a => updatedAddOns.includes(a._id)).reduce((sum, a) => sum + (a.duration || 0), 0);
+      const updatedAddOns = exists
+        ? prev.addOns.filter(id => id !== addOnId)
+        : [...prev.addOns, addOnId];
+
+      const totalAddOnDuration = suggestedAddOns
+        .filter(a => updatedAddOns.includes(a._id))
+        .reduce((sum, a) => sum + (a.duration || 0), 0);
+
       const baseDuration = services.find(s => s._id === prev.serviceId)?.duration || 60;
-      return { ...prev, addOns: updatedAddOns, duration: baseDuration + totalAddOnDuration };
+
+      return {
+        ...prev,
+        addOns: updatedAddOns,
+        duration: baseDuration + totalAddOnDuration
+      };
     });
   };
 
-const toMinutes = (t) => {
+  const toMinutes = (t) => {
     const ampmMatch = t.match(/^([0-9]{1,2}):([0-9]{2})\s?(AM|PM)?$/i);
     if (ampmMatch) {
       let [_, hour, minute, period] = ampmMatch;
@@ -165,50 +154,25 @@ const toMinutes = (t) => {
     return h * 60 + m;
   };
 
-  const handleNewClientSubmit = async () => {
-    if (!/^[0-9]{10}$/.test(newClient.phone)) {
-      toast.error("Phone number must be 10 digits.");
-      return;
-    }
-
-if (newClient.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newClient.email)) {
-  toast.error("Please enter a valid email address.");
-  return;
-}
-else
-{
-newClient.email = "Add Email"
-}
-
-    if (clients.find(c => c.phone === newClient.phone)) {
-      setDuplicatePhone(true);
-      toast.error("Client with this phone number already exists.");
-      return;
-    }
-    try {
-      const res = await API.post('/admin/clients', newClient);
-      await fetchClients();
-      setForm(prev => ({ ...prev, clientId: res.data._id }));
-      setAddingClient(false);
-      toast.success("New client added and selected.");
-    } catch (err) {
-      setError('Failed to add new client.');
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
     if (!form.clientId || !form.serviceId || !form.date || !form.time) {
       setError('Please complete all required fields.');
       return;
     }
+
     try {
       await onSave(form);
       resetForm();
       onClose();
     } catch (err) {
-      setError(err.response?.status === 409 ? 'That time slot is already booked. Please choose another.' : 'Failed to save appointment.');
+      if (err.response?.status === 409) {
+        setError('That time slot is already booked. Please choose another.');
+      } else {
+        setError('Failed to save appointment.');
+      }
     }
   };
 
@@ -225,44 +189,23 @@ newClient.email = "Add Email"
         <h2 className="text-xl font-bold mb-4">{initialData ? 'Edit' : 'Add'} Appointment</h2>
         {error && <p className="text-red-600 mb-2">{error}</p>}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!addingClient ? (
-            <>
-              <div className="flex gap-2">
-                <input ref={phoneInputRef} className="border p-2 w-full" placeholder="Search by Phone" value={phoneSearch} onChange={e => setPhoneSearch(e.target.value)} />
-                <button type="button" onClick={handlePhoneSearch} className="bg-blue-500 text-white px-4">Find</button>
-              </div>
-              {matchedClient && (
-                <p className="text-green-700 text-sm ml-1">MatAAched: {matchedClient.fullName}</p>
-              )}
-            </>
-          ) : (
-            <div className="space-y-2">
-              <input className="w-full border p-2" placeholder="First Name" value={newClient.firstName} 
-		onChange={e => setNewClient({ ...newClient, firstName: e.target.value })} />
-              <input className="w-full border p-2" placeholder="Last Name" value={newClient.lastName} 
-		onChange={e => setNewClient({ ...newClient, lastName: e.target.value })} />
-              <input className="w-full border p-2" placeholder="Phone" value={newClient.phone} 
-		onChange={e => setNewClient({ ...newClient, phone: e.target.value })} />
-              <input className="w-full border p-2" placeholder="Email (optional)" value={newClient.email} 
-		onChange={e => setNewClient({ ...newClient, email: e.target.value })} />
-              <div className="flex gap-2">
-                <button type="button" className="bg-green-600 text-white px-4 py-2" onClick={handleNewClientSubmit}>Save Client</button>
-                <button type="button" className="border px-4 py-2" onClick={() => setAddingClient(false)}>Cancel</button>
-              </div>
-            </div>
-          )}
+          <select name="clientId" value={form.clientId} onChange={handleChange} required className="w-full border p-2">
+            <option value="">Select Client</option>
+            {clients.map(c => (
+              <option key={c._id} value={c._id}>
+                {c.firstName ? `${c.firstName} ${c.lastName}` : c.fullName}
+              </option>
+            ))}
+          </select>
 
-          <div>
-            <label className="block font-medium">Service</label>
-            <select name="serviceId" value={form.serviceId} onChange={handleChange} required className="w-full border p-2">
-              <option value="">Select Service</option>
-              {services.map(s => (
-                <option key={s._id} value={s._id}>{s.name}</option>
-              ))}
-            </select>
-          </div>
+          <select name="serviceId" value={form.serviceId} onChange={handleChange} required className="w-full border p-2">
+            <option value="">Select Service</option>
+            {services.map(s => (
+              <option key={s._id} value={s._id}>{s.name}</option>
+            ))}
+          </select>
 
- <input type="date" name="date" value={form.date} onChange={handleChange} required className="w-full border p-2" />
+          <input type="date" name="date" value={form.date} onChange={handleChange} required className="w-full border p-2" />
 
           {form.date && form.serviceId && (
             <div className="grid grid-cols-3 gap-2">
@@ -347,4 +290,3 @@ newClient.email = "Add Email"
     </div>
   );
 }
-
