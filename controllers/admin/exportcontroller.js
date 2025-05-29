@@ -1,4 +1,4 @@
-const Appointment = require('../../models/Appointment');
+const Appointment = require('../../models/appointment');
 const { Parser } = require('json2csv');
 
 exports.exportAppointments = async (req, res) => {

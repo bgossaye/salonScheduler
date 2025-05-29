@@ -27,7 +27,7 @@ const clientRoutes =      require('./routes/client/clients');
 const appointmentRoutes = require('./routes/client/appointments');
 const serviceRoutes =     require('./routes/client/services');
 const availabilityRoutes = require('./routes/shared/availability');
-const schedulingRoutes = require('./routes/schedulingRoutes');
+const schedulingRoutes = require('./routes/schedulingroutes');
 
 // Use the route
 app.use('/api/clients', clientRoutes);

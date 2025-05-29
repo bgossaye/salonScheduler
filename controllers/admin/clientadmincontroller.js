@@ -59,12 +59,30 @@ exports.uploadClientPhoto = async (req, res) => {
     res.status(500).json({ error: 'Failed to upload image' });
   }
 };
+
+exports.createClient = async (req, res) => {
+  try {
+    const newClient = await Client.create(req.body);
+    console.log("📤 @ createClient:", newClient);
+
+    res.status(201).json(newClient);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create client' });
+  }
+};
 exports.deleteClient = async (req, res) => {
   try {
     const { id } = req.params;
-    await Client.findByIdAndDelete(id);
+
+    const deletedClient = await Client.findByIdAndDelete(id);
+
+    if (!deletedClient) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
     res.status(200).json({ message: 'Client deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete client' });
   }
 };
+
