@@ -1,4 +1,4 @@
-const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/serviceAdminController');
+const express = require('express'); const router = express.Router(); const controller = require('../../controllers/admin/serviceadmincontroller');
 
 router.get('/', controller.getServices);
 router.post('/', controller.addService);

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const controller = require('../../controllers/admin/appointmentAdminController');
+const controller = require('../../controllers/admin/appointmentadmincontroller');
 
 router.get('/', controller.getAppointments);
 router.post('/', controller.createAppointment);  
