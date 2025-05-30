@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const serviceSchema = new mongoose.Schema({
-  category: { type: String, required: true },
+  category: { type: String, required: true }, // e.g., 'Color', 'Add-ons'
   name: { type: String, required: true },
   price: { type: Number, required: true },
   duration: { type: Number, required: true },
@@ -11,7 +11,8 @@ const serviceSchema = new mongoose.Schema({
       duration: { type: Number, required: true }
     }
   ],
-  suggestedAddOns: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }]
+  isAddOn: { type: Boolean, default: false }, 
+  suggestedAddOns: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }] 
 });
 
 module.exports = mongoose.model('Service', serviceSchema);

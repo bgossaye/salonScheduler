@@ -62,15 +62,28 @@ exports.uploadClientPhoto = async (req, res) => {
 
 exports.createClient = async (req, res) => {
   try {
-    const newClient = await Client.create(req.body);
-    console.log("📤 @ createClient:", newClient);
+    const { firstName, lastName, phone, email } = req.body;
 
-    res.status(201).json(newClient);
+    if (!firstName || !lastName || !phone) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const newClient = {
+      firstName,
+      lastName,
+      phone,
+      fullName: `${firstName} ${lastName}`,
+    };
+
+    if (email) newClient.email = email;
+
+    const client = await new Client(newClient).save();
+    res.status(201).json(client);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to create client' });
+    console.error("❌ Failed to create client:", err);
+    res.status(500).json({ error: 'Server error creating client' });
   }
-};
-exports.deleteClient = async (req, res) => {
+};exports.deleteClient = async (req, res) => {
   try {
     const { id } = req.params;
 
