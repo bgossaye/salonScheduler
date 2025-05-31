@@ -41,7 +41,7 @@ app.use('/api/schedule', schedulingRoutes);
 const adminAppointments = require('./routes/admin/appointments');
 const adminClients = require('./routes/admin/clients');
 const adminServices = require('./routes/admin/services');
-const adminStoreHours = require('./routes/admin/storeHours');
+const adminStoreHours = require('./routes/admin/storehours');
 const adminReminders = require('./routes/admin/reminders');
 const adminAuth = require('./routes/admin/auth');
 const adminReports = require('./routes/admin/reports');
