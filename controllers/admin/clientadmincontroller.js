@@ -34,7 +34,36 @@ exports.updateClient = async (req, res) => {
   }
 };
 
-// Get client details including appointment history
+// Get full client info including last completed appointment
+exports.getClientWithLastCompletedAppointment = async (req, res) => {
+  try {
+    const client = await Client.findById(req.params.id).lean();
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+
+    const lastCompleted = await Appointment.find({
+      clientId: req.params.id,
+      status: 'completed',
+    })
+      .sort({ date: -1 })
+      .limit(1)
+      .populate('serviceId');
+
+    if (lastCompleted.length > 0) {
+      const last = lastCompleted[0];
+      client.lastCompletedAppointment = {
+        date: last.date,
+        service: last.serviceId?.name || 'Unknown',
+      };
+    }
+
+    res.json(client);
+  } catch (err) {
+    console.error('❌ Failed to fetch client details:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// Get client details including appointment history (still used elsewhere)
 exports.getClientDetails = async (req, res) => {
   try {
     const client = await Client.findById(req.params.id);
@@ -45,6 +74,7 @@ exports.getClientDetails = async (req, res) => {
   }
 };
 
+// Upload client profile photo
 exports.uploadClientPhoto = async (req, res) => {
   try {
     const filePath = `/uploads/${req.file.filename}`;
@@ -60,6 +90,7 @@ exports.uploadClientPhoto = async (req, res) => {
   }
 };
 
+// Create client
 exports.createClient = async (req, res) => {
   try {
     const { firstName, lastName, phone, email } = req.body;
@@ -75,7 +106,7 @@ exports.createClient = async (req, res) => {
       fullName: `${firstName} ${lastName}`,
     };
 
-    if (email) newClient.email = email;
+    if (email?.trim()) newClient.email = email.trim();
 
     const client = await new Client(newClient).save();
     res.status(201).json(client);
@@ -83,7 +114,10 @@ exports.createClient = async (req, res) => {
     console.error("❌ Failed to create client:", err);
     res.status(500).json({ error: 'Server error creating client' });
   }
-};exports.deleteClient = async (req, res) => {
+};
+
+// Delete client
+exports.deleteClient = async (req, res) => {
   try {
     const { id } = req.params;
 

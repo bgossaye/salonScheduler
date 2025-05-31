@@ -7,6 +7,7 @@ router.get('/', controller.getClients);
 router.get('/:id', controller.getClientDetails);
 router.patch('/:id', controller.updateClient);
 router.delete('/:id', controller.deleteClient);
+router.get('/:id/details', controller.getClientWithLastCompletedAppointment);
 
 const multer = require('multer');
 const path = require('path');
