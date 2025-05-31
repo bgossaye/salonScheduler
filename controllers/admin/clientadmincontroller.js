@@ -34,45 +34,42 @@ exports.updateClient = async (req, res) => {
   }
 };
 
-// Get full client info including last completed appointment
-exports.getClientWithLastCompletedAppointment = async (req, res) => {
+// getClientDetails
+exports.getClientDetails = async (req, res) => {
   try {
-    const client = await Client.findById(req.params.id).lean();
-    if (!client) return res.status(404).json({ error: 'Client not found' });
+    const client = await Client.findById(req.params.id)
+      .select('firstName lastName fullName phone email dob notes profilePhoto visitFrequency servicePreferences paymentInfo');
 
-    const lastCompleted = await Appointment.find({
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    const appointments = await Appointment.find({ clientId: req.params.id });
+
+    const lastCompletedAppointment = await Appointment.findOne({
       clientId: req.params.id,
       status: 'completed',
     })
-      .sort({ date: -1 })
-      .limit(1)
-      .populate('serviceId');
+      .sort({ date: -1, time: -1 })
+      .select('date service');
 
-    if (lastCompleted.length > 0) {
-      const last = lastCompleted[0];
-      client.lastCompletedAppointment = {
-        date: last.date,
-        service: last.serviceId?.name || 'Unknown',
-      };
-    }
+    // Ensure fullName fallback
+    const fullName = client.fullName || `${client.firstName || ''} ${client.lastName || ''}`.trim();
 
-    res.json(client);
+    res.json({
+      client: {
+        ...client.toObject(),
+        fullName,
+      },
+      appointments,
+      lastCompletedAppointment,
+    });
   } catch (err) {
-    console.error('❌ Failed to fetch client details:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-};
-
-// Get client details including appointment history (still used elsewhere)
-exports.getClientDetails = async (req, res) => {
-  try {
-    const client = await Client.findById(req.params.id);
-    const appointments = await Appointment.find({ clientId: req.params.id });
-    res.json({ client, appointments });
-  } catch (err) {
+    console.error('Error fetching client details:', err);
     res.status(400).json({ error: 'Client not found' });
   }
 };
+
 
 // Upload client profile photo
 exports.uploadClientPhoto = async (req, res) => {
