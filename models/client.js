@@ -5,6 +5,7 @@ const clientSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true },
   email: { type: String, unique: true, sparse: true},
   dob: { type: Date },
+  visitFrequency: { type: String },
 
   contactPreferences: {
     method: { type: String, enum: ['sms', 'email', 'phone'], default: 'sms' },
