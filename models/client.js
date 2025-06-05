@@ -9,8 +9,19 @@ const clientSchema = new mongoose.Schema({
 
   contactPreferences: {
     method: { type: String, enum: ['sms', 'email', 'phone'], default: 'sms' },
-    optInPromotions: { type: Boolean, default: false }
+    optInPromotions: { type: Boolean, default: false },
+    smsDisabled: { type: Boolean, default: false },
+    emailDisabled: { type: Boolean, default: false }
   },
+
+  smsHistory: [
+    {
+      date: { type: Date, default: Date.now },
+      content: { type: String, required: true }
+    }
+  ],
+
+
 
   appointmentHistory: [
     {
@@ -18,7 +29,7 @@ const clientSchema = new mongoose.Schema({
       date: Date,
       stylist: String,
       duration: String,
-      status: { type: String, enum: ['completed', 'no-show', 'cancelled'], default: 'completed' }
+      status: { type: String, enum: ['booked', 'completed', 'noshow', 'cancelled'], default: 'booked' }
     }
   ],
 

@@ -4,28 +4,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const app = express();
-const cron = require('node-cron');
-const sendSMS = require('./utils/sendSMS');
-const Appointment = require('./models/appointment');
-const Client = require('./models/client');
-
-cron.schedule('0 8 * * *', async () => {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const yyyy = tomorrow.getFullYear();
-  const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
-  const dd = String(tomorrow.getDate()).padStart(2, '0');
-  const formattedDate = `${yyyy}-${mm}-${dd}`;
-
-  const appointments = await Appointment.find({ date: formattedDate });
-
-  for (const appt of appointments) {
-    const client = await Client.findById(appt.clientId);
-    if (client?.phone) {
-      await sendSMS(client.phone, `Reminder: You have an appointment tomorrow at ${appt.time} with Rakie Salon.`);
-    }
-  }
-});
 
 // ✅ MongoDB connection using env variable or local fallback
 mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
@@ -77,9 +55,6 @@ app.use('/api/admin/reminders', adminReminders);
 app.use('/api/admin/login', adminAuth);
 app.use('/api/admin/reports', adminReports);
 app.use('/api/admin/export', adminExport);
-app.use('/api/twilio', require('./routes/external/twilio'));
-app.use('/api/admin/status-logs', require('./routes/admin/statuslogs'));
-
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;
