@@ -45,7 +45,7 @@ router.post('/', async (req, res) => {
     visitStats
   } = req.body;
 
-  if (!fullName || !phone || !email || !dob) {
+  if (!fullName || !phone) {
     return res.status(400).json({ error: 'Missing required client fields' });
   }
 

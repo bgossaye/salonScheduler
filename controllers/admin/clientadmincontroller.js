@@ -105,6 +105,7 @@ const { firstName, lastName, phone, email, visitFrequency } = req.body;
 
     if (email?.trim()) newClient.email = email.trim();
     if (visitFrequency?.trim()) newClient.visitFrequency = visitFrequency.trim();
+    if (servicePreferences?.trim()) newClient.servicePreferences = servicePreferences.trim();
 
     const client = await new Client(newClient).save();
     res.status(201).json(client);
