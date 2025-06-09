@@ -91,8 +91,12 @@ exports.deleteAppointment = async (req, res) => {
     if (!appt) return res.status(404).json({ error: 'Appointment not found' });
 
     // Call centralized SMS logic
-    console.log('sendSMS cancelation');
-    await sendSMS('cancelation', appt);
+    if (appt.clientId) {
+      console.log('sendSMS cancelation');
+      await sendSMS('cancelation', appt);
+    } else {
+      console.log('Deleted, but No client found, skipping SMS.');
+    }
 
     await Appointment.findByIdAndDelete(req.params.id);
 

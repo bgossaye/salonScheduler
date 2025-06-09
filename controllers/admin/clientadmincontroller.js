@@ -38,7 +38,7 @@ exports.updateClient = async (req, res) => {
 exports.getClientDetails = async (req, res) => {
   try {
     const client = await Client.findById(req.params.id)
-      .select('firstName lastName fullName phone email dob notes profilePhoto visitFrequency servicePreferences paymentInfo');
+      .select('firstName lastName phone email dob notes profilePhoto visitFrequency servicePreferences paymentInfo');
 
     if (!client) {
       return res.status(404).json({ error: 'Client not found' });
@@ -53,16 +53,20 @@ exports.getClientDetails = async (req, res) => {
       .sort({ date: -1, time: -1 })
       .select('date service');
 
-    // Ensure fullName fallback
-    const fullName = client.fullName || `${client.firstName || ''} ${client.lastName || ''}`.trim();
-
     res.json({
-      client: {
-        ...client.toObject(),
-        fullName,
-      },
-      appointments,
-      lastCompletedAppointment,
+      _id: client._id,
+      firstName: client.firstName,
+      lastName: client.lastName,
+      phone: client.phone,
+      email: client.email,
+      dob: client.dob,
+      notes: client.notes,
+      appointmentHistory: client.appointmentHistory,
+      servicePreferences: client.servicePreferences,
+      paymentInfo: client.paymentInfo,
+      contactPreferences: client.contactPreferences,
+      profilePhoto: client.profilePhoto,
+      visitFrequency: client.visitFrequency
     });
   } catch (err) {
     console.error('Error fetching client details:', err);
@@ -100,7 +104,6 @@ const { firstName, lastName, phone, email, visitFrequency } = req.body;
       firstName,
       lastName,
       phone,
-      fullName: `${firstName} ${lastName}`,
     };
 
     if (email?.trim()) newClient.email = email.trim();

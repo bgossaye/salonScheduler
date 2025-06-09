@@ -16,7 +16,7 @@ const statusToNotifyTypeMap = {
 const getTemplateData = (type, appt, client, extra = {}) => {
   const date = formatDate(appt.date);
   const time = formatTime(appt.time);
-  const clientName = client?.fullName || '';
+  const clientName = `${client?.firstName || ''} ${client?.lastName || ''}`.trim();
   const message = extra.message || '';
 
   return {

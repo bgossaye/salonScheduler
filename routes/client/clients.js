@@ -32,7 +32,8 @@ router.get('/all', async (req, res) => {
 // POST /api/clients
 router.post('/', async (req, res) => {
   const {
-    fullName,
+    firstName,
+    lastName,
     phone,
     email,
     dob,
@@ -45,13 +46,14 @@ router.post('/', async (req, res) => {
     visitStats
   } = req.body;
 
-  if (!fullName || !phone) {
+  if (!firstName || !lastName || !phone) {
     return res.status(400).json({ error: 'Missing required client fields' });
   }
 
   try {
     const client = new Client({
-      fullName,
+      firstName,
+      lastName,
       phone,
       email,
       dob,
