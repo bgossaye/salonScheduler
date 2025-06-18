@@ -8,6 +8,7 @@ const cron = require('node-cron');
 const sendSMS = require('./utils/sendSMS');
 const Appointment = require('./models/appointment');
 const Client = require('./models/client');
+const giftCardRoutes = require('./routes/admin/giftcard');
 
 cron.schedule('0 8 * * *', async () => {
   const tomorrow = new Date();
@@ -79,6 +80,7 @@ app.use('/api/admin/reports', adminReports);
 app.use('/api/admin/export', adminExport);
 app.use('/api/twilio', require('./routes/external/twilio'));
 app.use('/api/admin/status-logs', require('./routes/admin/statuslogs'));
+app.use('/api/giftcards', giftCardRoutes);
 
 
 // ✅ Server start

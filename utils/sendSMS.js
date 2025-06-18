@@ -1,4 +1,5 @@
 // sendSMS.js
+require('dotenv').config();
 const twilio = require('twilio');
 const { getTemplate } = require('../utils/templateManager');
 const { formatDate, formatTime } = require('./formatHelpers');
@@ -39,14 +40,9 @@ module.exports = async function sendSMS(typeOrStatus, appt, extra = {}) {
   try {
     const clientData = appt.clientId;
 
-    //if (!clientData) {
-    //  console.error(`❌ SMS skipped: appointment missing clientId.`);
-
-    if (clientData) {
-      console.error(`❌ SMS skipped: while testing. UNCOMMENT`);
-      return;
-    }
-
+    if (!clientData) {
+      console.error(`❌ SMS skipped: appointment missing clientId.`);
+	}
     if (!clientData.contactPreferences) {
       console.warn(`⚠️ SMS warning: contactPreferences missing on clientId ${clientData._id}`);
     } else if (clientData.contactPreferences.smsDisabled) {
@@ -71,12 +67,17 @@ module.exports = async function sendSMS(typeOrStatus, appt, extra = {}) {
 
     console.log(`➡️ Sending SMS to: ${clientData.phone}`);
     console.log(`@ sendSMS message:`, message);
+  
+console.log(`➡️ REMOVE RETURN after test is complete`);
+return;
 
     const result = await client.messages.create({
       body: message,
       from: fromPhone,
       to: clientData.phone,
-      statusCallback: `${process.env.BASE_URL}/api/twilio/status-callback`
+      //statusCallback: `${process.env.BASE_URL}/api/twilio/status-callback`
+      statusCallback: `${process.env.BACKEND_BASE_URL}/api/twilio/status-callback`
+      
     });
 
     console.log(`📩 SMS (${type}) sent to ${clientData.phone}`);
