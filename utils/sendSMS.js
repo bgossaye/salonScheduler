@@ -1,7 +1,7 @@
 // sendSMS.js
 require('dotenv').config();
 const twilio = require('twilio');
-const NotificationSettings = require('../models/notificationSettings');
+const NotificationSettings = require('../models/notificationsettings');
 const { getTemplate } = require('../utils/templateManager');
 const { formatDate, formatTime } = require('./formatHelpers');
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
