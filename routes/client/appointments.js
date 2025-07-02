@@ -38,7 +38,7 @@ router.post('/', async (req, res) => {
       time,
       duration,
       addOns: addOns || [],
-      status: status || 'Booked'
+      status: status || 'booked'
     });
 
     const saved = await appointment.save();

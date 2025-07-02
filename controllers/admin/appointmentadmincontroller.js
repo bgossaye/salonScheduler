@@ -30,7 +30,6 @@ exports.getAppointments = async (req, res) => {
 
 exports.createAppointment = async (req, res) => {
   try {
-console.log('controller createAppointment');
 
     const { clientId, serviceId, service, date, time, duration } = req.body;
 
@@ -40,15 +39,15 @@ console.log('controller createAppointment');
 
     // Just create and save the appointment — skip overlap check
     const appointment = new Appointment(req.body);
-const saved = await appointment.save();
+    const saved = await appointment.save();
 
-// 🔁 Now populate the saved appointment before sending SMS
-const populated = await Appointment.findById(saved._id).populate('clientId');
+    // 🔁 Now populate the saved appointment before sending SMS
+    const populated = await Appointment.findById(saved._id).populate('clientId');
 
-console.log('sendSMS confirmation');
-await sendSMS('confirmation', populated);
 
-res.status(201).json(saved);
+    await sendSMS('confirmation', populated);
+
+    res.status(201).json(saved);
 
   } catch (err) {
     console.error('❌ Failed to create appointment:', err);
@@ -58,31 +57,39 @@ res.status(201).json(saved);
 
 
 exports.updateAppointment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, ...otherFields } = req.body;
+    try {
+        const { id } = req.params;
+        const { status, ...otherFields } = req.body;
 
-    const updateFields = { status, ...otherFields };
+        const updateFields = { status, ...otherFields };
 
-    const updated = await Appointment.findByIdAndUpdate(id, updateFields, {
-      new: true,
-    }).populate('clientId');
+        const updated = await Appointment.findByIdAndUpdate(id, updateFields, {
+            new: true,
+        }).populate('clientId');
 
-    if (!updated) {
-      return res.status(404).json({ message: 'Appointment not found' });
+        if (!updated) {
+            return res.status(404).json({ message: 'Appointment not found' });
+        }
+
+        // Send response FIRST to avoid blocking or duplicate headers
+        res.json(updated);
+
+        // Send SMS in the background
+        try {
+            await sendSMS(status, updated);
+        } catch (smsErr) {
+            console.error('⚠️ SMS sending failed:', smsErr.message);
+            // Don't rethrow or return since the response is already sent
+        }
+
+    } catch (err) {
+        console.error('❌ Update failed:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Failed to update appointment' });
+        }
     }
-
-    if (status) {
-      const sendSMS = require('../../utils/sendSMS');
-      await sendSMS(status, updated); // sendSMS maps it to template internally
-    }
-
-    res.json(updated);
-  } catch (err) {
-    console.error('❌ Update failed:', err);
-    res.status(500).json({ message: 'Failed to update appointment' });
-  }
 };
+
 
 exports.deleteAppointment = async (req, res) => {
   try {

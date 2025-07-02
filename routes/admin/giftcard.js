@@ -11,6 +11,9 @@ router.get('/redeem-search/:code', giftCardController.getGiftCardByCode);
 
 // Admin card list
 router.get('/all', giftCardController.getAllGiftCards);
+router.put('/update/:code', giftCardController.updateGiftCard);
+router.delete('/delete/:code', giftCardController.deleteGiftCard);
+router.post('/send-email', giftCardController.sendGiftCardEmail);
 
 
 module.exports = router;

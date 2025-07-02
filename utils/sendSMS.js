@@ -1,9 +1,9 @@
 // sendSMS.js
 require('dotenv').config();
 const twilio = require('twilio');
+const NotificationSettings = require('../models/notificationSettings');
 const { getTemplate } = require('../utils/templateManager');
 const { formatDate, formatTime } = require('./formatHelpers');
-
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 const fromPhone = process.env.TWILIO_PHONE;
 
@@ -37,25 +37,34 @@ const populateTemplate = (template, dataMap) => {
 };
 
 module.exports = async function sendSMS(typeOrStatus, appt, extra = {}) {
-  try {
-    const clientData = appt.clientId;
 
+    try {
+    const clientData = appt.clientId;
     if (!clientData) {
       console.error(`❌ SMS skipped: appointment missing clientId.`);
-	}
-    if (!clientData.contactPreferences) {
-      console.warn(`⚠️ SMS warning: contactPreferences missing on clientId ${clientData._id}`);
-    } else if (clientData.contactPreferences.smsDisabled) {
-      console.log(`📴 SMS skipped: client ${clientData._id} has SMS disabled.`);
-      return;
-    }
+      }
 
-    if (!clientData.phone) {
-      console.error(`❌ SMS failed: client phone number missing for clientId ${clientData._id || 'unknown'}`);
-      return;
-    }
+      const settings = await NotificationSettings.findOne();
 
-    const type = statusToNotifyTypeMap[typeOrStatus] || typeOrStatus;
+      if (!settings?.masterNotificationsEnabled) {
+          console.log(`📴 Global SMS disabled)`);
+          return;
+      }
+
+      const type = statusToNotifyTypeMap[typeOrStatus] || typeOrStatus;
+      const templateEnabled = settings?.[type]?.enabled;
+
+      if (!templateEnabled) {
+          console.log(`📴 SMS type "${type}" is disabled in notification settings.`);
+          return;
+      }
+
+      if (clientData.contactPreferences?.smsDisabled) {
+          console.log(`📴 SMS skipped: client ${clientData._id} has opted out of SMS.`);
+          return;
+      }
+
+
     const template = await getTemplate(type);
     if (!template) {
       console.log(`⚠️ No SMS template found for type: ${type}`);
@@ -65,20 +74,29 @@ module.exports = async function sendSMS(typeOrStatus, appt, extra = {}) {
     const messageData = getTemplateData(type, appt, clientData, extra);
     const message = populateTemplate(template, messageData);
 
-    console.log(`➡️ Sending SMS to: ${clientData.phone}`);
-    console.log(`@ sendSMS message:`, message);
-  
-console.log(`➡️ REMOVE RETURN after test is complete`);
-return;
 
-    const result = await client.messages.create({
-      body: message,
-      from: fromPhone,
-      to: clientData.phone,
-      //statusCallback: `${process.env.BASE_URL}/api/twilio/status-callback`
-      statusCallback: `${process.env.BACKEND_BASE_URL}/api/twilio/status-callback`
-      
-    });
+        let toPhone = clientData.phone?.trim();
+
+        // If number doesn't start with '+', assume it's US and prepend +1
+        if (toPhone && !toPhone.startsWith('+')) {
+            toPhone = '+1' + toPhone.replace(/\D/g, '');
+        }
+
+        if (!/^\+\d{10,15}$/.test(toPhone)) {
+            console.error(`❌ Invalid phone number format for SMS: ${toPhone}`);
+            return;
+        }
+        console.log(`➡️ Sending SMS to: `, toPhone);
+        console.log(`@ sendSMS message:`, message);
+
+        const result = await client.messages.create({
+            body: message,
+            from: fromPhone,
+            to: toPhone,
+            statusCallback: `${process.env.BACKEND_BASE_URL}/api/twilio/status-callback`
+        });
+
+
 
     console.log(`📩 SMS (${type}) sent to ${clientData.phone}`);
     return result;

@@ -19,7 +19,8 @@ exports.getClients = async (req, res) => {
     res.json(clients);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
-  }
+    }
+
 };
 
 // Update client profile
@@ -34,45 +35,50 @@ exports.updateClient = async (req, res) => {
   }
 };
 
-// getClientDetails
 exports.getClientDetails = async (req, res) => {
-  try {
-    const client = await Client.findById(req.params.id)
-      .select('firstName lastName phone email dob notes profilePhoto visitFrequency servicePreferences paymentInfo');
+    try {
+        const client = await Client.findById(req.params.id)
+            .select('firstName lastName phone email dob notes profilePhoto visitFrequency servicePreferences paymentInfo contactPreferences appointmentHistory');
 
-    if (!client) {
-      return res.status(404).json({ error: 'Client not found' });
+        if (!client) {
+            return res.status(404).json({ error: 'Client not found' });
+        }
+
+        const lastCompletedAppointment = await Appointment.findOne({
+            clientId: req.params.id,
+            status: 'completed',
+        })
+            .sort({ date: -1, time: -1 })
+            .select('date service');
+
+        res.json({
+            _id: client._id,
+            firstName: client.firstName,
+            lastName: client.lastName,
+            phone: client.phone,
+            email: client.email,
+            dob: client.dob,
+            notes: client.notes,
+            appointmentHistory: client.appointmentHistory,
+            servicePreferences: client.servicePreferences,
+            paymentInfo: client.paymentInfo,
+            profilePhoto: client.profilePhoto,
+            visitFrequency: client.visitFrequency,
+            contactPreferences: {
+                method: client.contactPreferences?.method,
+                optInPromotions: client.contactPreferences?.optInPromotions,
+                smsDisabled: client.contactPreferences?.smsDisabled,
+                emailDisabled: client.contactPreferences?.emailDisabled
+            },
+            lastCompletedAppointment
+        });
+
+    } catch (err) {
+        console.error('Error fetching client details:', err);
+        res.status(400).json({ error: 'Client not found' });
     }
-
-    const appointments = await Appointment.find({ clientId: req.params.id });
-
-    const lastCompletedAppointment = await Appointment.findOne({
-      clientId: req.params.id,
-      status: 'completed',
-    })
-      .sort({ date: -1, time: -1 })
-      .select('date service');
-
-    res.json({
-      _id: client._id,
-      firstName: client.firstName,
-      lastName: client.lastName,
-      phone: client.phone,
-      email: client.email,
-      dob: client.dob,
-      notes: client.notes,
-      appointmentHistory: client.appointmentHistory,
-      servicePreferences: client.servicePreferences,
-      paymentInfo: client.paymentInfo,
-      contactPreferences: client.contactPreferences,
-      profilePhoto: client.profilePhoto,
-      visitFrequency: client.visitFrequency
-    });
-  } catch (err) {
-    console.error('Error fetching client details:', err);
-    res.status(400).json({ error: 'Client not found' });
-  }
 };
+
 
 
 // Upload client profile photo

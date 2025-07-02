@@ -11,22 +11,27 @@ const Client = require('./models/client');
 const giftCardRoutes = require('./routes/admin/giftcard');
 
 cron.schedule('0 8 * * *', async () => {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const yyyy = tomorrow.getFullYear();
-  const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
-  const dd = String(tomorrow.getDate()).padStart(2, '0');
-  const formattedDate = `${yyyy}-${mm}-${dd}`;
-
-  const appointments = await Appointment.find({ date: formattedDate });
-
-  for (const appt of appointments) {
-    const client = await Client.findById(appt.clientId);
-    if (client?.phone) {
-      await sendSMS(client.phone, `Reminder: You have an appointment tomorrow at ${appt.time} with Rakie Salon.`);
-    }
-  }
+    await sendDailyReminders();
 });
+
+async function sendDailyReminders() {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const yyyy = tomorrow.getFullYear();
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    const formattedDate = `${yyyy}-${mm}-${dd}`;
+
+    const appointments = await Appointment.find({ date: formattedDate }).populate('clientId');
+
+    for (const appt of appointments) {
+        if (!appt.clientId) continue;
+        if (appt.status !== 'booked') continue;
+        await sendSMS('reminder', appt, {
+            message: `Reminder: You have an appointment tomorrow at ${appt.time} with Rakie Salon.`
+        });
+    }
+}
 
 // ✅ MongoDB connection using env variable or local fallback
 mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
@@ -38,6 +43,7 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
 
 // ✅ Middleware
 app.use(cors());
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 app.use('/uploads', express.static('uploads'));
@@ -69,6 +75,7 @@ const adminReminders = require('./routes/admin/reminders');
 const adminAuth = require('./routes/admin/auth');
 const adminReports = require('./routes/admin/reports');
 const adminExport = require('./routes/admin/export');
+const adminNotificationSettings = require('./routes/admin/notificationsettings');
 
 app.use('/api/admin/appointments', adminAppointments);
 app.use('/api/admin/clients', adminClients);
@@ -81,10 +88,20 @@ app.use('/api/admin/export', adminExport);
 app.use('/api/twilio', require('./routes/external/twilio'));
 app.use('/api/admin/status-logs', require('./routes/admin/statuslogs'));
 app.use('/api/giftcards', giftCardRoutes);
+app.use('/api/admin/notificationsettings', adminNotificationSettings);
 
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
+ /* 
+setTimeout(async () => {
+  try {
+    await sendDailyReminders();
+  } catch (err) {
+    console.error('❌ Failed to run daily reminders:', err);
+  }
+}, 5000);
+*/
 });

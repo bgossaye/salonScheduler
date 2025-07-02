@@ -1,10 +1,17 @@
 const Reminder = require('../../models/reminder');
+const NotificationSettings = require('../../models/notificationSettings');
 
 // GET all reminders
 exports.getReminders = async (req, res) => {
   try {
-    const reminders = await Reminder.find();
-    res.json(reminders);
+  const templates = await Reminder.find({});
+  const master = await NotificationSettings.findOne({ templateType: 'master' });
+
+  res.json({
+    templates,
+    masterNotificationsEnabled: master?.enabled !== false, // default to true if not found
+  });
+
   } catch (err) {
     console.error('❌ Failed to fetch reminders:', err);
     res.status(500).json({ error: 'Server error' });
