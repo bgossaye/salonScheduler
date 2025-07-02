@@ -1,5 +1,5 @@
 // controllers/admin/notificationSettingsController.js
-const NotificationSettings = require('../../models/notificationSettings');
+const NotificationSettings = require('../../models/notificationsettings');
 
 
 

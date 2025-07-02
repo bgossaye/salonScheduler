@@ -1,5 +1,5 @@
 const Reminder = require('../../models/reminder');
-const NotificationSettings = require('../../models/notificationSettings');
+const NotificationSettings = require('../../models/notificationsettings');
 
 // GET all reminders
 exports.getReminders = async (req, res) => {
