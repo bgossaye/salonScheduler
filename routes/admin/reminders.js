@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const controller = require('../../controllers/admin/reminderController');
+const controller = require('../../controllers/admin/remindercontroller');
 
 router.get('/', controller.getReminders);
 router.put('/:type', controller.updateReminderSettings);
