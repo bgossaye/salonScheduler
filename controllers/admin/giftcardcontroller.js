@@ -181,9 +181,9 @@ exports.deleteGiftCard = async (req, res) => {
 exports.sendGiftCardEmail = async (req, res) => {
     const { email, code, amount } = req.body;
 
-    const qrImage = await QRCode.toDataURL(code); // use this base64 in img src
-
     try {
+        const qrImage = await QRCode.toDataURL(code); // use this base64 in img src
+
         if (!qrImage || !qrImage.startsWith('data:image/png;base64,')) {
             throw new Error('Invalid QR image data.');
         }
@@ -235,7 +235,9 @@ exports.sendGiftCardEmail = async (req, res) => {
         };
 
         await transporter.sendMail(mailOptions);
-        console.log(`✅ Email sent to ${email}`);
+        console.log(`✅ Giftcard email sent to ${email}`);
+        return res.status(200).json({ message: 'Email sent successfully' });
+
     } catch (err) {
         console.error('❌ Failed to send email:', err);
         throw err;
