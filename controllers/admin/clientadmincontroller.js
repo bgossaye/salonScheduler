@@ -100,7 +100,15 @@ exports.uploadClientPhoto = async (req, res) => {
 // Create client
 exports.createClient = async (req, res) => {
   try {
-const { firstName, lastName, phone, email, visitFrequency } = req.body;
+      const {
+          firstName,
+          lastName,
+          phone,
+          email,
+          visitFrequency,
+          servicePreferences,
+          contactPreferences
+      } = req.body;
 
     if (!firstName || !lastName || !phone) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -109,7 +117,11 @@ const { firstName, lastName, phone, email, visitFrequency } = req.body;
     const newClient = {
       firstName,
       lastName,
-      phone,
+        phone,
+        ...(email && { email: email.trim() }),
+        ...(visitFrequency && { visitFrequency }),
+        ...(servicePreferences && { servicePreferences }),
+        ...(contactPreferences && { contactPreferences })
     };
 
     if (email?.trim()) newClient.email = email.trim();
