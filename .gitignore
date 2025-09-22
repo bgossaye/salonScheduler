@@ -8,19 +8,45 @@
 /frontend/.cache/
 
 # Environment variables
-.env
 /frontend/.env
 /backend/.env
-
-# Logs
-*.log
-
-# OS-specific
-.DS_Store
-Thumbs.db
 
 
 dist/
 build/
-*.log
 .DS_Store
+
+# deps & caches
+**/node_modules/
+**/.cache/
+**/.parcel-cache/
+**/.vite/
+**/.turbo/
+**/.next/
+**/.nuxt/
+**/.eslintcache
+
+# coverage & test artifacts
+**/coverage/
+**/cypress/
+**/playwright-report/
+**/test-results/
+
+# logs
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS junk
+Thumbs.db
+desktop.ini
+
+# env (keep only a sanitized .env.example)
+.env
+.env.*
+!.env.example
+
+# HMR leftovers
+*.hot-update.js
+*.hot-update.json

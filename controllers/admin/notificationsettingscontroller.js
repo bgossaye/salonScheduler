@@ -2,11 +2,10 @@
 const NotificationSettings = require('../../models/notificationsettings');
 
 
-
 // GET all templates + master switch
 exports.getNotificationSettings = async (req, res) => {
   try {
-    const settings = await NotificationSettings.findOne();
+	const settings = await NotificationSettings.getSingleton();
 
     if (!settings) {
       return res.json({
@@ -36,24 +35,18 @@ exports.getNotificationSettings = async (req, res) => {
 };
 
 
-// PUT /notificationsettings/:templateType
 exports.updateTemplate = async (req, res) => {
-  const { templateType } = req.params;
+  const { templateType } = req.params; // e.g., 'pending', 'confirmation', ...
   const { smsTemplate, emailTemplate, enabled } = req.body;
-
   try {
-    let setting = await NotificationSettings.findOne({ templateType });
-
-    if (!setting) {
-      setting = new NotificationSettings({ templateType });
-    }
-
-    setting.smsTemplate = smsTemplate || setting.smsTemplate;
-    setting.emailTemplate = emailTemplate || setting.emailTemplate;
-    setting.enabled = enabled !== undefined ? enabled : setting.enabled;
-
-    await setting.save();
-    res.json(setting);
+    let settings = await NotificationSettings.getSingleton();
+    if (!settings) settings = new NotificationSettings();
+    if (!settings[templateType]) settings[templateType] = {};
+    if (smsTemplate !== undefined) settings[templateType].smsTemplate = smsTemplate;
+    if (emailTemplate !== undefined) settings[templateType].emailTemplate = emailTemplate;
+    if (enabled !== undefined) settings[templateType].enabled = enabled;
+    await settings.save();
+    res.json(settings[templateType]);
   } catch (err) {
     console.error(`❌ Failed to update ${templateType} template:`, err);
     res.status(500).json({ error: 'Failed to update template' });
@@ -65,7 +58,7 @@ exports.toggleMasterSwitch = async (req, res) => {
   const { enabled } = req.body;
 
   try {
-    let settings = await NotificationSettings.findOne();
+    let settings = await NotificationSettings.getSingleton();
 
     if (!settings) {
       settings = new NotificationSettings();

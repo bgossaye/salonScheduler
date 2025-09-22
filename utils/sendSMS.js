@@ -8,6 +8,7 @@ const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 const fromPhone = process.env.TWILIO_PHONE;
 
 const statusToNotifyTypeMap = {
+  pending: 'pending',
   booked: 'confirmation',
   completed: 'thankyou',
   canceled: 'cancelation',
@@ -47,7 +48,7 @@ module.exports = async function sendSMS(typeOrStatus, appt, extra = {}) {
       const settings = await NotificationSettings.findOne();
 
       if (!settings?.masterNotificationsEnabled) {
-          console.log(`📴 Global SMS disabled)`);
+          console.log(`📴 Global SMS disabled`);
           return;
       }
 

@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const clientSchema = new mongoose.Schema({
   firstName: { type: String, required: true },
@@ -6,7 +6,9 @@ const clientSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true },
   email: { type: String, unique: true, sparse: true},
   dob: { type: Date },
-    visitFrequency: { type: Number, default: 6 },
+  nickname: { type: String, default: '' }, // 🔒 Admin-only field
+
+  visitFrequency: { type: Number, default: 6 },
 
   contactPreferences: {
     method: { type: String, enum: ['sms', 'email', 'phone'], default: 'sms' },

@@ -58,6 +58,7 @@ exports.getClientDetails = async (req, res) => {
             phone: client.phone,
             email: client.email,
             dob: client.dob,
+            nickname: client.nickname,
             notes: client.notes,
             appointmentHistory: client.appointmentHistory,
             servicePreferences: client.servicePreferences,
