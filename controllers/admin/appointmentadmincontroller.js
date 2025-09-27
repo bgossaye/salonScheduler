@@ -41,11 +41,11 @@ exports.createAppointment = async (req, res) => {
     const appointment = new Appointment(req.body);
     const saved = await appointment.save();
 
+    //uncomment when fixed
     // 🔁 Now populate the saved appointment before sending SMS
-    const populated = await Appointment.findById(saved._id).populate('clientId');
+    //const populated = await Appointment.findById(saved._id).populate('clientId');
 
-
-    await sendSMS('confirmation', populated);
+    //await sendSMS('confirmation', populated);
 
     res.status(201).json(saved);
 
