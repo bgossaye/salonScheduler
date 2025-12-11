@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const ctl = require('../../controllers/admin/notificationTemplatesController');
+const ctl = require('../../controllers/admin/notificationtemplatescontroller');
 
 router.get('/', ctl.getAll);
 router.put('/master-toggle', ctl.toggleMaster);
