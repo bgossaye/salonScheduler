@@ -1,0 +1,89 @@
+{
+  "templates": [
+    {
+      "templateType": "confirmation",
+      "smsTemplate": "Hi {{clientName}}, your appointment is confirmed for {{date}} at {{time}}.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Your appointment is confirmed for {{date}} at {{time}}.<br><br>Thank you,<br>Rakie Salon",
+      "enabled": true
+    },
+    {
+      "templateType": "reminder",
+      "smsTemplate": "Reminder: You have an appointment at Rakie Salon on {{date}} at {{time}}.",
+      "emailTemplate": "Dear {{clientName}},<br><br>This is a reminder for your upcoming appointment on {{date}} at {{time}}.<br><br>See you soon!<br>Rakie Salon",
+      "enabled": true
+    },
+    {
+      "templateType": "thankyou",
+      "smsTemplate": "Hi {{clientName}}, thank you for your visit! We hope to see you again soon.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Thank you for choosing Rakie Salon. We hope you had a great experience!<br><br>See you next time.",
+      "enabled": true
+    },
+    {
+      "templateType": "promotion",
+      "smsTemplate": "Special Offer! Enjoy a limited-time promotion at Rakie Salon. Details inside!",
+      "emailTemplate": "Hi {{clientName}},<br><br>Check out our latest promotion: {{message}}<br><br>Book now and save!",
+      "enabled": true
+    },
+    {
+      "templateType": "announcement",
+      "smsTemplate": "Announcement from Rakie Salon: {{message}}",
+      "emailTemplate": "Hello {{clientName}},<br><br>{{message}}<br><br>Best,<br>Rakie Salon",
+      "enabled": true
+    },
+    {
+      "templateType": "cancelation",
+      "smsTemplate": "Hi {{clientName}}, your appointment on {{date}} at {{time}} has been canceled. Please contact us to reschedule.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Your appointment scheduled for {{date}} at {{time}} has been canceled.<br><br>Please contact us if you’d like to reschedule.",
+      "enabled": true
+    },
+    {
+      "templateType": "confirmation",
+      "smsTemplate": "Hi {{clientName}}, your appointment is confirmed for {{date}} at {{time}}.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Your appointment is confirmed for {{date}} at {{time}}.<br><br>Thank you,<br>Rakie Salon.",
+      "enabled": true
+    },
+    {
+      "templateType": "reminder",
+      "smsTemplate": "Hi {{clientName}}, this is a reminder for your appointment on {{date}} at {{time}}.",
+      "emailTemplate": "Dear {{clientName}},<br><br>This is a reminder for your upcoming appointment on- {{date}} at {{time}}.<br><br>See you soon!<br>Rakie Salon.",
+      "enabled": true
+    },
+    {
+      "templateType": "thankyou",
+      "smsTemplate": "Hi {{clientName}}, thank you for your visit! We hope to see you again soon.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Thank you for choosing Rakie Salon. We hope you had a great experience!<br><br>See you next time.",
+      "enabled": true
+    },
+    {
+      "templateType": "promotion",
+      "smsTemplate": "Hi {{clientName}}, Special Offer! Enjoy a limited-time promotion at Rakie Salon. Details inside!",
+      "emailTemplate": "Hi {{clientName}},<br><br>Check out our latest promotion: {{message}}<br><br>Book now and save!",
+      "enabled": true
+    },
+    {
+      "templateType": "announcement",
+      "smsTemplate": "Announcement from Rakie Salon: {{message}} .",
+      "emailTemplate": "Hello {{clientName}},<br><br>{{message}}<br><br>Best,<br>Rakie Salon",
+      "enabled": true
+    },
+    {
+      "templateType": "holiday",
+      "smsTemplate": "Hi {{clientName}}, Happy Holidays from Rakie Salon! Wishing you joy and beauty.",
+      "emailTemplate": "Warm wishes this season from all of us at Rakie Salon. Happy Holidays! ",
+      "enabled": true
+    },
+    {
+      "templateType": "cancelation",
+      "smsTemplate": "Hi {{clientName}}, your appointment on {{date}} at {{time}} has been canceled. Please contact us to reschedule.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Your appointment scheduled for {{date}} at {{time}} has been canceled.<br><br>Please contact us if you’d like to reschedule.  ",
+      "enabled": true
+    },
+    {
+      "templateType": "noshow",
+      "smsTemplate": "Hi {{clientName}}, we missed you today at {{time}} on {{date}}. Please contact us to reschedule or update your availability.",
+      "emailTemplate": "Dear {{clientName}},<br><br>We noticed you missed your appointment on {{date}} at {{time}}.<br><br>Please let us know if you’d like to reschedule. We’d love to see you soon!  ",
+      "enabled": true
+    }
+  ],
+  "masterNotificationsEnabled": true
+}

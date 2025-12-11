@@ -11,20 +11,28 @@ exports.createGiftCard = async (req, res) => {
     const { code, type, amount, pin, email, adminPassword } = req.body;
 
     if (!['digital', 'physical'].includes(type)) {
-      return res.status(400).json({ message: 'Invalid card type' });
+      return res
+        .status(400)
+        .json({ message: 'Invalid card type. Must be digital or physical.' });
     }
 
     const numericAmount = Number(amount);
     if (isNaN(numericAmount) || numericAmount < 0) {
-      return res.status(400).json({ message: 'Invalid amount' });
+      return res
+        .status(400)
+        .json({ message: 'Amount must be a positive number.' });
     }
 
     if (!code || code.length !== 28) {
-      return res.status(400).json({ message: 'Code must be exactly 28 characters' });
+      return res
+        .status(400)
+        .json({ message: 'Code must be exactly 28 characters long.' });
     }
 
     if (type === 'digital' && (!email || !email.includes('@'))) {
-      return res.status(400).json({ message: 'Valid email is required for digital cards' });
+      return res
+        .status(400)
+        .json({ message: 'A valid email is required for digital gift cards.' });
     }
 
     const giftCardData = {
@@ -41,43 +49,76 @@ exports.createGiftCard = async (req, res) => {
 
     try {
       await newCard.save();
-        return res.status(201).json({ message: 'Gift card created', giftCard: newCard });
-     
+      return res
+        .status(201)
+        .json({ message: 'Gift card created successfully.', giftCard: newCard });
     } catch (saveErr) {
       console.error('GiftCard save error:', saveErr.message, saveErr);
-      return res.status(500).json({ message: 'Failed to save gift card', error: saveErr.message });
+
+      // 🔍 Handle duplicate code nicely
+      if (
+        saveErr.code === 11000 ||
+        (typeof saveErr.message === 'string' &&
+          saveErr.message.toLowerCase().includes('duplicate key'))
+      ) {
+        return res.status(409).json({
+          message:
+            'This gift card code is already in the system. ' +
+            'Try redeeming that card or use a different code.',
+        });
+      }
+
+      return res.status(500).json({
+        message:
+          'Could not save the gift card. Please try again or contact support.',
+        error: saveErr.message,
+      });
     }
   } catch (err) {
     console.error('Create gift card error:', err.message, err.stack);
-    return res.status(500).json({ message: 'Server error', error: err.message });
+    return res
+      .status(500)
+      .json({ message: 'Server error while creating gift card.', error: err.message });
   }
 };
+
 
 // ✅ Scan Gift Card to Validate and Fetch Info
 exports.scanGiftCard = async (req, res) => {
   try {
     const { code } = req.body;
+
     if (!code || code.length !== 28) {
-      return res.status(400).json({ message: 'Invalid or missing gift card code' });
+      return res.status(400).json({
+        message:
+          'Invalid or missing gift card code. ' +
+          'The code must be exactly 28 characters long.',
+      });
     }
 
     const card = await GiftCard.findOne({ code });
     if (!card) {
-      return res.status(404).json({ message: 'Gift card not found' });
+      return res.status(404).json({
+        message:
+          'This gift card is not in the system. ' +
+          'Please check the code or load a new gift card.',
+      });
     }
 
-    res.json({
-      message: 'Gift card found',
+    return res.json({
+      message: 'Gift card found.',
       giftCard: {
         type: card.type,
         amount: card.amount,
         remainingBalance: card.remainingBalance,
-        requiresPin: !!card.pin
-      }
+        requiresPin: !!card.pin,
+      },
     });
   } catch (error) {
     console.error('Scan error:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res
+      .status(500)
+      .json({ message: 'Server error while scanning gift card.' });
   }
 };
 
@@ -85,46 +126,94 @@ exports.scanGiftCard = async (req, res) => {
 exports.redeemGiftCard = async (req, res) => {
   try {
     const { code, redeemAmount, pin } = req.body;
-    const card = await GiftCard.findOne({ code });
-    if (!card) return res.status(404).json({ message: 'Card not found' });
 
+    const card = await GiftCard.findOne({ code });
+    if (!card) {
+      return res.status(404).json({
+        message:
+          'This gift card is not in the system. ' +
+          'Please verify the code or load the gift card before redeeming.',
+      });
+    }
+
+    // PIN check (if the card requires one)
     if (card.pin && pin !== card.pin) {
-      return res.status(403).json({ message: 'Incorrect PIN' });
+      return res.status(403).json({
+        message: 'Incorrect PIN. Please double-check and try again.',
+      });
     }
 
     const numericAmount = Number(redeemAmount);
-    if (isNaN(numericAmount) || numericAmount <= 0 || numericAmount > card.remainingBalance) {
-      return res.status(400).json({ message: 'Invalid redeem amount' });
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({
+        message:
+          'Redeem amount must be a positive number greater than zero.',
+      });
     }
 
+    if (numericAmount > card.remainingBalance) {
+      return res.status(400).json({
+        message:
+          'Redeem amount is greater than the card balance. ' +
+          'You can only redeem up to the remaining balance.',
+      });
+    }
+
+    // Record redemption and adjust balance
     card.redeemedAt.push({ date: new Date(), amount: numericAmount });
     card.remainingBalance -= numericAmount;
-    await card.save();
 
-    res.json({ message: 'Card redeemed', remaining: card.remainingBalance });
+    // ✅ If balance now 0, delete card instead of saving it
+    if (card.remainingBalance <= 0) {
+      await GiftCard.deleteOne({ _id: card._id });
+      return res.json({
+        message: 'Card fully redeemed and removed from the system.',
+        remaining: 0,
+        deleted: true,
+      });
+    } else {
+      await card.save();
+      return res.json({
+        message: 'Gift card redeemed successfully.',
+        remaining: card.remainingBalance,
+        deleted: false,
+      });
+    }
   } catch (error) {
     console.error('Redeem error:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res
+      .status(500)
+      .json({ message: 'Server error while redeeming gift card.' });
   }
 };
+
 
 exports.getGiftCardByCode = async (req, res) => {
   try {
     const { code } = req.params;
 
     if (!code || code.length !== 28) {
-      return res.status(400).json({ message: 'Invalid gift card code' });
+      return res.status(400).json({
+        message:
+          'Invalid gift card code. It must be exactly 28 characters long.',
+      });
     }
 
     const card = await GiftCard.findOne({ code });
     if (!card) {
-      return res.status(404).json({ message: 'Gift card not found' });
+      return res.status(404).json({
+        message:
+          'Gift card not found in the system. ' +
+          'Check the code or load a new card before redeeming.',
+      });
     }
 
-    res.json({ card });
+    return res.json({ card });
   } catch (err) {
     console.error('Lookup error:', err);
-    res.status(500).json({ message: 'Server error' });
+    return res
+      .status(500)
+      .json({ message: 'Server error while looking up gift card.' });
   }
 };
 

@@ -1,96 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const Client = require('../../models/client');
+const controller = require('../../controllers/admin/clientadmincontroller');
 
-// GET /api/clients?phone=...
-router.get('/', async (req, res) => {
-  const phone = req.query.phone;
-  if (!phone) {
-    return res.status(400).json({ error: 'Phone number is required' });
-  }
+// ✅ OTP endpoints (mounted at /api/clients/…)
+router.post('/pin/request-otp', controller.requestPinOtp);
+router.post('/pin/verify-otp', controller.verifyPinOtp);
+router.post('/pin/set', controller.setPinWithOtp);
 
-  try {
-    const client = await Client.findOne({ phone });
-    res.json(client || null);
-  } catch (err) {
-    console.error('Error fetching client:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.get('/', controller.getClients);
+router.get('/all', controller.getClients);
+router.post('/', controller.createClient);
 
-// GET /api/clients/all
-router.get('/all', async (req, res) => {
-  try {
-    const clients = await Client.find();
-    res.json(clients);
-  } catch (err) {
-    console.error('Error fetching all clients:', err);
-    res.status(500).json({ error: 'Failed to fetch clients' });
-  }
-});
+ // PATCH /api/clients/:id  (use controller so pin/pinConfirm are hashed properly)
+ router.patch('/:id', controller.updateClient);
+ // Optional: keep PUT for compatibility, but delegate to same controller
+ router.put('/:id', controller.updateClient);
 
-// POST /api/clients
-router.post('/', async (req, res) => {
-  const {
-    firstName,
-    lastName,
-    phone,
-    email,
-    dob,
-    contactPreferences,
-    appointmentHistory,
-    servicePreferences,
-    notes,
-    paymentInfo,
-    profilePhoto,
-    visitStats
-  } = req.body;
-
-  if (!firstName || !lastName || !phone) {
-    return res.status(400).json({ error: 'Missing required client fields' });
-  }
-
-  try {
-    const client = new Client({
-      firstName,
-      lastName,
-      phone,
-      email,
-      dob,
-      contactPreferences,
-      appointmentHistory,
-      servicePreferences,
-      notes,
-      paymentInfo,
-      profilePhoto,
-      visitStats
-    });
-
-    await client.save();
-    res.status(201).json(client);
-  } catch (err) {
-    console.error('Error creating client:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// PUT /api/clients/:id
-router.put('/:id', async (req, res) => {
-  try {
-    const updated = await Client.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true
-    });
-
-    if (!updated) {
-      return res.status(404).json({ error: 'Client not found' });
-    }
-
-    res.json(updated);
-  } catch (err) {
-    console.error('Error updating client:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.post('/login', controller.loginClient);
 
 module.exports = router;

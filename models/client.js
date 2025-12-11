@@ -12,8 +12,7 @@ const clientSchema = new mongoose.Schema({
 
   contactPreferences: {
     method: { type: String, enum: ['sms', 'email', 'phone'], default: 'sms' },
-    optInPromotions: { type: Boolean, default: false },
-    smsDisabled: { type: Boolean, default: false },
+    optInPromotions: { type: Boolean, default: true },
     emailDisabled: { type: Boolean, default: false }
   },
 
@@ -63,7 +62,34 @@ const clientSchema = new mongoose.Schema({
     averageFrequencyWeeks: Number,
     lastVisit: Date,
     nextAppointment: Date
-  }
+  },
+  // Authentication
+  pinHash: { type: String, select: false },
+  pinSetAt: { type: Date },
+  pinIsDefault: { type: Boolean, default: false },
+  failedPinAttempts: { type: Number, default: 0 },
+  pinLockedUntil: { type: Date },
+  // OTP flow (phone verification / PIN reset)
+  otpHash: { type: String, select: false },
+  otpExpiresAt: { type: Date },
+  otpIssuedAt: { type: Date },
+  otpVerifyAttempts: {
+    type: Number,
+    default: 0,
+    set: v => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    }
+  },
+  otpRequestCount: {
+    type: Number,
+    default: 0,
+    set: v => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    }
+  },
+  otpLastRequestedAt: { type: Date }
 });
 
 module.exports = mongoose.models.Client || mongoose.model('Client', clientSchema);

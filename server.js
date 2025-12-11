@@ -1,5 +1,4 @@
 require('dotenv').config();
-console.log("ENV VARS (DEBUG):", process.env);
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -15,6 +14,7 @@ const { googleReviewsHandler } = require('./routes/google');
 cron.schedule('0 8 * * *', async () => {
     await sendDailyReminders();
 });
+const inbound = require('./routes/twilioInbound');
 
 async function sendDailyReminders() {
     const tomorrow = new Date();
@@ -24,67 +24,120 @@ async function sendDailyReminders() {
     const dd = String(tomorrow.getDate()).padStart(2, '0');
     const formattedDate = `${yyyy}-${mm}-${dd}`;
 
-    const appointments = await Appointment.find({ date: formattedDate }).populate('clientId');
+    const appointments = await Appointment
+      .find({ date: formattedDate })
+      .populate('clientId serviceId');
 
     for (const appt of appointments) {
         if (!appt.clientId) continue;
         if (appt.status !== 'booked') continue;
-        await sendSMS('reminder', appt, {
-            message: `Reminder: You have an appointment tomorrow at ${appt.time} with Rakie Salon.`
-        });
+      // Use DB template (NotificationSettings.reminder); no hard-coded message:
+        await sendSMS('reminder', appt);
     }
 }
 
-// ✅ MongoDB connection using env variable or local fallback
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/salon', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('✅ MongoDB connected'))
-.catch(err => console.error('❌ MongoDB connection error:', err));
+
+
+// at top
+mongoose.connect(process.env.MONGO_URI)
+  .then(async () => {
+    console.log('✅ MongoDB connected');
+    // now continue with the rest of your startup (e.g., app.listen)
+  })
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // ✅ Middleware
-app.use(cors());
+
+function toOriginArray(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean).map(String);
+
+  // Accept JSON array in env: ["http://localhost:3001","https://rakiesalon.com"]
+  if (typeof val === 'string' && val.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
+    } catch (_) { /* fall through */ }
+  }
+
+  // Comma/whitespace-separated string: a,b c
+  if (typeof val === 'string') {
+    return val
+      .split(/[,\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  // Object (e.g., {DEV:"http://...", PROD:"https://..."})
+  if (typeof val === 'object') {
+    return Object.values(val)
+      .flat()
+      .filter(Boolean)
+      .map(String);
+  }
+
+  // Fallback: single value
+  return [String(val)];
+}
+
+const allowedOrigins = toOriginArray(process.env.ALLOWED_ORIGINS || [
+  "https://rakiesalon.com",
+  "https://www.rakiesalon.com",
+  "http://localhost:3000",
+  "http://localhost:3001"
+]);
+
+// Handy local checks
+const isLocal = (o) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o || '');
+
+
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+    return cb(new Error("CORS not allowed: " + origin));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  // allowedHeaders: ["Content-Type", "Authorization"], // optional; omit to echo requested headers
+  credentials: false,         // <— this line is fine
+  maxAge: 86400,              // cache preflight 1 day
+};
+
+console.log('[CORS] allowedOrigins:', allowedOrigins);
+
+app.use(cors({
+  credentials: true,
+  origin(origin, cb) {
+    // allow non-browser tools with no Origin (curl/Postman)
+    if (!origin) return cb(null, true);
+
+    // wildcard
+    if (allowedOrigins.includes('*')) return cb(null, true);
+
+    // exact match or startsWith (lets you allow a site and its paths)
+    const ok = isLocal(origin) ||
+      allowedOrigins.some(o =>
+        origin === o || (o.endsWith('/') ? origin.startsWith(o) : origin.startsWith(o + '/'))
+      );
+
+    if (ok) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+}));
+
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 app.use('/uploads', express.static('uploads'));
 
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
-// Ultra-light health endpoint: zero response body, optional DB ping, optional key
-// --- in server.js (additions/edits near your existing health handler) ---
-const KEEPALIVE_KEY = process.env.KEEPALIVE_KEY || '';
-
-async function healthHandler(req, res) {
-  try {
-    // Optional shared-secret gate
-    if (KEEPALIVE_KEY && req.query?.k !== KEEPALIVE_KEY && req.body?.k !== KEEPALIVE_KEY) {
-      return res.status(204).set('Cache-Control', 'no-store').end();
-    }
-    // Optional DB ping if asked (heavier)
-    if ((req.query?.db === '1' || req.body?.db === '1') && mongoose?.connection?.db?.admin) {
-      try { await mongoose.connection.db.admin().ping(); } catch {}
-    }
-    return res.status(204).set('Cache-Control', 'no-store').end();
-  } catch {
-    return res.status(204).set('Cache-Control', 'no-store').end();
-  }
-}
-app.use(express.json()); // ensure JSON body parsed before routes
-
-app.get('/healthz', healthHandler);
-app.head('/healthz', healthHandler);
-app.post('/healthz', healthHandler);
-
-app.get('/api/healthz', healthHandler);
-app.head('/api/healthz', healthHandler);
-app.post('/api/healthz', healthHandler);
-
-// (Optional) short alias if you want: /ping → /healthz
-app.all('/ping', healthHandler);
-app.all('/api/ping', healthHandler);
-
+ // Health (Mongo-backed awake marker)
+ app.use('/api', require('./routes/health'));
+ // Compatibility shim for old monitors:
+ app.get('/healthz', (req, res) => res.redirect(307, '/api/healthz'));
 
 // Vanity redirects
 app.get(['/admin', '/admin/', '/booking/admin', '/booking/admin/'], (req, res) => {
@@ -96,9 +149,6 @@ const bookingBuild = path.join(__dirname, '..', 'frontend', 'build');
 
 // site build is in ../../site/build
 const siteBuild = path.join(__dirname, '..', '..', 'site', 'build');
-
-// Serve site at /
-app.use(express.static(siteBuild));
 
 app.get('/api/google-reviews', googleReviewsHandler); 
 
@@ -122,30 +172,31 @@ const adminAppointments = require('./routes/admin/appointments');
 const adminClients = require('./routes/admin/clients');
 const adminServices = require('./routes/admin/services');
 const adminStoreHours = require('./routes/admin/storehours');
-const adminReminders = require('./routes/admin/reminders');
 const adminAuth = require('./routes/admin/auth');
 const adminReports = require('./routes/admin/reports');
 const adminExport = require('./routes/admin/export');
-const adminNotificationSettings = require('./routes/admin/notificationsettings');
+const notificationtemplate = require('./routes/admin/notificationtemplate');
 
 app.use('/api/admin/appointments', adminAppointments);
 app.use('/api/admin/clients', adminClients);
 app.use('/api/admin/services', adminServices);
 app.use('/api/admin/store-hours', adminStoreHours);
-app.use('/api/admin/reminders', adminReminders);
 app.use('/api/admin/login', adminAuth);
 app.use('/api/admin/reports', adminReports);
 app.use('/api/admin/export', adminExport);
 app.use('/api/twilio', require('./routes/external/twilio'));
 app.use('/api/admin/status-logs', require('./routes/admin/statuslogs'));
 app.use('/api/giftcards', giftCardRoutes);
-app.use('/api/admin/notificationsettings', adminNotificationSettings);
+app.use('/api/admin/notificationsettings', notificationtemplate);
 
 // Serve booking at /booking
-app.use('/booking', express.static(bookingBuild));
-app.get('/booking/*', (_, res) => res.sendFile(path.join(bookingBuild, 'index.html')));
+ app.use('/booking', express.static(bookingBuild, { index: false }));
+ app.use(express.static(siteBuild, { index: false }));
 
+app.get('/booking/*', (_, res) => res.sendFile(path.join(bookingBuild, 'index.html')));
 app.get('*', (_, res) => res.sendFile(path.join(siteBuild, 'index.html')));
+
+app.use('/api/sms', inbound);
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;

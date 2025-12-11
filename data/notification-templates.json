@@ -1,0 +1,79 @@
+{
+  "masterNotificationsEnabled": true,
+  "templates": [
+    {
+      "templateType": "pending",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, we received your request for {{service}} on {{date}} at {{time}}. We’ll confirm shortly.",
+      "emailTemplate": "Dear {{clientName}},<br><br>We received your request for {{service}} on {{date}} at {{time}}. We’ll confirm shortly."
+    },
+    {
+      "templateType": "confirmation",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, your appointment is confirmed for {{date}} at {{time}}.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Your appointment is confirmed for {{date}} at {{time}}."
+    },
+    {
+      "templateType": "reminder",
+      "enabled": true,
+      "smsTemplate": "Reminder: {{service}} on {{date}} at {{time}} at Rakie Salon.",
+      "emailTemplate": "Dear {{clientName}},<br><br>This is a reminder for {{service}} on {{date}} at {{time}}."
+    },
+    {
+      "templateType": "thankyou",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, thank you for your visit! ❤️",
+      "emailTemplate": "Dear {{clientName}},<br><br>Thank you for choosing Rakie Salon!"
+    },
+    {
+      "templateType": "cancelation",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, your appointment on {{date}} at {{time}} has been canceled.",
+      "emailTemplate": "Dear {{clientName}},<br><br>Your appointment on {{date}} at {{time}} has been canceled."
+    },
+    {
+      "templateType": "noshow",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, we missed you today at {{time}} on {{date}}. Please reschedule when ready.",
+      "emailTemplate": "Dear {{clientName}},<br><br>We noticed you missed your appointment on {{date}} at {{time}}."
+    },
+    {
+      "templateType": "promotion",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, special offer at Rakie Salon: {{message}}",
+      "emailTemplate": "Dear {{clientName}},<br><br>{{message}}"
+    },
+    {
+      "templateType": "announcement",
+      "enabled": true,
+      "smsTemplate": "Announcement: {{message}}",
+      "emailTemplate": "Hello {{clientName}},<br><br>{{message}}"
+    },
+    {
+      "templateType": "holiday",
+      "enabled": true,
+      "smsTemplate": "Hi {{clientName}}, happy holidays from Rakie Salon! 🎄",
+      "emailTemplate": "Warm wishes from all of us at Rakie Salon!"
+    },
+
+    // PIN flows
+    {
+      "templateType": "pin_otp",
+      "enabled": true,
+      "smsTemplate": "Rakie Salon code: {{otp}} (valid {{ttlMins}} min). Do not share this code.",
+      "emailTemplate": "Your code is {{otp}} (valid {{ttlMins}} minutes)."
+    },
+    {
+      "templateType": "pin_verified",
+      "enabled": true,
+      "smsTemplate": "Your code was verified. You can proceed.",
+      "emailTemplate": "Your code was verified."
+    },
+    {
+      "templateType": "pin_changed",
+      "enabled": true,
+      "smsTemplate": "Your Rakie Salon PIN was updated.",
+      "emailTemplate": "Your Rakie Salon PIN was updated."
+    }
+  ]
+}
