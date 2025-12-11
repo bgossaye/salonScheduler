@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const Client = require('../models/Client');
+const Client = require('../models/client');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

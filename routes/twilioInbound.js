@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
 const { MessagingResponse } = twilio.twiml;
-const Client = require('../models/Client');
+const Client = require('../models/client');
 
 // optional: tighten webhook validation in prod
 const twilioMiddleware = twilio.webhook({
