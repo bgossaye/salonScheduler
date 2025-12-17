@@ -389,72 +389,76 @@ exports.uploadClientPhoto = async (req, res) => {
 
 // Create client
 exports.createClient = async (req, res) => {
-
-const {
-  firstName,
-  lastName,
-  phone,
-  email,
-  visitFrequency,
-  servicePreferences,
-  contactPreferences,
-  pin,
-  requiresNamePinUpgrade,
-  nameVerifiedAt
-} = req.body;
-
+  try {
+    const {
+      firstName,
+      lastName,
+      phone,
+      email,
+      visitFrequency,
+      servicePreferences,
+      contactPreferences,
+      pin,
+      requiresNamePinUpgrade,
+      nameVerifiedAt
+    } = req.body;
 
     if (!firstName || !lastName || !phone) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Decide the effective PIN: use caller's 4-digit pin OR fallback to last4(phone)
     const hasCallerPin = /^\d{4}$/.test(String(pin || ''));
-    const effectivePin  = hasCallerPin ? String(pin) : phone.slice(-4);
+    const effectivePin = hasCallerPin ? String(pin) : phone.slice(-4);
 
-const newClient = {
-  firstName,
-  lastName,
-  phone,
-  ...(email && { email: email.trim() }),
-  ...(visitFrequency && { visitFrequency }),
-  ...(servicePreferences && { servicePreferences }),
-  ...(contactPreferences && { contactPreferences }),
+    const newClient = {
+      firstName,
+      lastName,
+      phone,
+      ...(email && { email: email.trim() }),
+      ...(visitFrequency && { visitFrequency }),
+      ...(servicePreferences && { servicePreferences }),
+      ...(contactPreferences && { contactPreferences }),
 
-  ...(Object.prototype.hasOwnProperty.call(req.body, 'requiresNamePinUpgrade') && {
-    requiresNamePinUpgrade: !!requiresNamePinUpgrade
-  }),
-  ...(Object.prototype.hasOwnProperty.call(req.body, 'nameVerifiedAt') && {
-    nameVerifiedAt: nameVerifiedAt ? new Date(nameVerifiedAt) : null
-  }),
+      ...(Object.prototype.hasOwnProperty.call(req.body, 'requiresNamePinUpgrade') && {
+        requiresNamePinUpgrade: !!requiresNamePinUpgrade
+      }),
+      ...(Object.prototype.hasOwnProperty.call(req.body, 'nameVerifiedAt') && {
+        nameVerifiedAt: nameVerifiedAt ? new Date(nameVerifiedAt) : null
+      }),
 
-  pinHash: await bcrypt.hash(effectivePin, 10),
-  pinSetAt: new Date(),
-  pinIsDefault: !hasCallerPin
-};
+      pinHash: await bcrypt.hash(effectivePin, 10),
+      pinSetAt: new Date(),
+      pinIsDefault: !hasCallerPin
+    };
 
     const client = await new Client(newClient).save();
 
-    // Respond to the caller immediately
     res.status(201).json(client);
 
-    // Fire-and-forget SMS (does not block the response)
-    const msg = hasCallerPin
-      ? 'Welcome to Rakie Salon! Your PIN was set successfully.'
-      : 'A temporary PIN equal to the last 4 digits of your phone was set. Please change it ASAP using the link below.';
+    // fire-and-forget SMS
     setImmediate(() => {
-      sendSMS('pin_changed', {
-        clientId: {
-          _id: client._id,
-          firstName,
-          lastName,
-          phone,
-          contactPreferences: client.contactPreferences || {}
+      sendSMS(
+        'pin_changed',
+        {
+          clientId: {
+            _id: client._id,
+            firstName,
+            lastName,
+            phone,
+            contactPreferences: client.contactPreferences || {}
+          }
+        },
+        {
+          message: hasCallerPin
+            ? 'Welcome to Rakie Salon! Your PIN was set successfully.'
+            : 'A temporary PIN equal to the last 4 digits of your phone was set. Please change it ASAP.'
         }
-      }, { message: msg })
-      .catch(err => console.error('[createClient] sendSMS error:', err?.code || '', err?.message || err));
+      ).catch(err =>
+        console.error('[createClient] sendSMS error:', err?.message || err)
+      );
     });
-    return; // already sent response
+
+    return;
   } catch (err) {
     console.error('❌ Failed to create client:', err);
     return res.status(500).json({ error: 'Server error creating client' });
