@@ -297,6 +297,18 @@ try {
       return;
     }
 
+// 🚧 TEMP WORKAROUND
+// Do not send SMS if client has not completed name/pin upgrade
+if (clientData?.requiresNamePinUpgrade === true) {
+  console.log(
+    '[sendSMS] SMS blocked — requiresNamePinUpgrade is still true for client:',
+    clientData.phone
+  );
+  return {
+    skipped: true,
+    reason: 'requiresNamePinUpgrade=true'
+  };
+}
     payload = { body, from, to };
     if (process.env.BACKEND_BASE_URL) {
       payload.statusCallback = `${process.env.BACKEND_BASE_URL}/api/twilio/status-callback`;
