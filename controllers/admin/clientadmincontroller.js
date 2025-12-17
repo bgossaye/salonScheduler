@@ -390,17 +390,18 @@ exports.uploadClientPhoto = async (req, res) => {
 // Create client
 exports.createClient = async (req, res) => {
 
-  try {
-    const {
-      firstName,
-      lastName,
-      phone,
-      email,
-      visitFrequency,
-      servicePreferences,
-      contactPreferences,
-      pin // <- NO pinConfirm here; client/UI validates that
-    } = req.body;
+const {
+  firstName,
+  lastName,
+  phone,
+  email,
+  visitFrequency,
+  servicePreferences,
+  contactPreferences,
+  pin,
+  requiresNamePinUpgrade,
+  nameVerifiedAt
+} = req.body;
 
 
     if (!firstName || !lastName || !phone) {
@@ -411,18 +412,26 @@ exports.createClient = async (req, res) => {
     const hasCallerPin = /^\d{4}$/.test(String(pin || ''));
     const effectivePin  = hasCallerPin ? String(pin) : phone.slice(-4);
 
-    const newClient = {
-      firstName,
-      lastName,
-      phone,
-      ...(email && { email: email.trim() }),
-      ...(visitFrequency && { visitFrequency }),
-      ...(servicePreferences && { servicePreferences }),
-      ...(contactPreferences && { contactPreferences }),
-      pinHash: await bcrypt.hash(effectivePin, 10),
-      pinSetAt: new Date(),
-      pinIsDefault: !hasCallerPin // true only when we auto-set last4
-    };
+const newClient = {
+  firstName,
+  lastName,
+  phone,
+  ...(email && { email: email.trim() }),
+  ...(visitFrequency && { visitFrequency }),
+  ...(servicePreferences && { servicePreferences }),
+  ...(contactPreferences && { contactPreferences }),
+
+  ...(Object.prototype.hasOwnProperty.call(req.body, 'requiresNamePinUpgrade') && {
+    requiresNamePinUpgrade: !!requiresNamePinUpgrade
+  }),
+  ...(Object.prototype.hasOwnProperty.call(req.body, 'nameVerifiedAt') && {
+    nameVerifiedAt: nameVerifiedAt ? new Date(nameVerifiedAt) : null
+  }),
+
+  pinHash: await bcrypt.hash(effectivePin, 10),
+  pinSetAt: new Date(),
+  pinIsDefault: !hasCallerPin
+};
 
     const client = await new Client(newClient).save();
 
