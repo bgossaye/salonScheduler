@@ -93,6 +93,29 @@ exports.getClients = async (req, res) => {
 exports.updateClient = async (req, res) => {
   try {
        const body = { ...req.body };
+    // ✅ Coerce requiresNamePinUpgrade robustly
+    if (Object.prototype.hasOwnProperty.call(body, 'requiresNamePinUpgrade')) {
+      const v = body.requiresNamePinUpgrade;
+      if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        body.requiresNamePinUpgrade = !(s === 'false' || s === '0' || s === '' || s === 'null' || s === 'undefined');
+      } else {
+        body.requiresNamePinUpgrade = !!v;
+      }
+    }
+
+    // ✅ Coerce nameVerifiedAt robustly
+    if (Object.prototype.hasOwnProperty.call(body, 'nameVerifiedAt')) {
+      const v = body.nameVerifiedAt;
+      if (!v || v === 'null' || v === 'undefined' || v === '') {
+        body.nameVerifiedAt = null;
+      } else {
+        const d = new Date(v);
+        body.nameVerifiedAt = Number.isNaN(d.getTime()) ? null : d;
+      }
+    }
+
+
        let pinChanged = false;
        if (body.pin) {
         if (!/^\d{4}$/.test(String(body.pin))) {
@@ -304,7 +327,8 @@ exports.verifyOtpOnly = async (req, res) => {
 exports.getClientDetails = async (req, res) => {
     try {
         const client = await Client.findById(req.params.id)
-            .select('firstName lastName phone email dob notes profilePhoto visitFrequency servicePreferences paymentInfo contactPreferences appointmentHistory');
+  .select('-pinHash -pinOtpHash -pinOtpExpires -pinOtpAttempts');
+
 
         if (!client) {
             return res.status(404).json({ error: 'Client not found' });

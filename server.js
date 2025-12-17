@@ -37,7 +37,6 @@ async function sendDailyReminders() {
 }
 
 
-
 // at top
 mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
@@ -86,43 +85,30 @@ const allowedOrigins = toOriginArray(process.env.ALLOWED_ORIGINS || [
   "http://localhost:3000",
   "http://localhost:3001"
 ]);
+const allowedOriginSet = new Set(allowedOrigins);
 
 // Handy local checks
 const isLocal = (o) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o || '');
 
-
-const corsOptions = {
-  origin(origin, cb) {
-    if (!origin || allowedOrigins.has(origin)) return cb(null, true);
-    return cb(new Error("CORS not allowed: " + origin));
-  },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  // allowedHeaders: ["Content-Type", "Authorization"], // optional; omit to echo requested headers
-  credentials: false,         // <— this line is fine
-  maxAge: 86400,              // cache preflight 1 day
-};
-
 console.log('[CORS] allowedOrigins:', allowedOrigins);
 
 app.use(cors({
-  credentials: true,
   origin(origin, cb) {
-    // allow non-browser tools with no Origin (curl/Postman)
+    // allow non-browser tools (curl/cron) with no Origin header
     if (!origin) return cb(null, true);
 
-    // wildcard
-    if (allowedOrigins.includes('*')) return cb(null, true);
+    // allow localhost always
+    if (isLocal(origin)) return cb(null, true);
 
-    // exact match or startsWith (lets you allow a site and its paths)
-    const ok = isLocal(origin) ||
-      allowedOrigins.some(o =>
-        origin === o || (o.endsWith('/') ? origin.startsWith(o) : origin.startsWith(o + '/'))
-      );
+    // allow exact matches from env/default list
+    if (allowedOriginSet.has(origin)) return cb(null, true);
 
-    if (ok) return cb(null, true);
     return cb(new Error(`CORS blocked for origin: ${origin}`));
   },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true,
+  maxAge: 86400,
 }));
 
 app.use(express.urlencoded({ extended: false }));
@@ -135,9 +121,41 @@ app.use(helmet({
 }));
 
  // Health (Mongo-backed awake marker)
- app.use('/api', require('./routes/health'));
- // Compatibility shim for old monitors:
- app.get('/healthz', (req, res) => res.redirect(307, '/api/healthz'));
+ //app.use('/api', require('./routes/health'));
+
+// ─────────────────────────────────────────────────────────────
+// Lightweight health endpoint (NO DB check; safe for cron/wake)
+// Supports GET (fetch) and POST (sendBeacon)
+// ─────────────────────────────────────────────────────────────
+app.get('/api/healthz', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({ ok: true, ts: Date.now() });
+});
+
+app.post('/api/healthz', (req, res) => {
+  // sendBeacon uses POST; keep it ultra-light
+  return res.status(204).end();
+});
+
+// Compatibility shim for old monitors:
+app.get('/healthz', (req, res) => res.redirect(307, '/api/healthz'));
+
+// ─────────────────────────────────────────────────────────────
+// Cron wake (token-protected; NO DB; safe under repeated calls)
+// ─────────────────────────────────────────────────────────────
+app.get('/api/cron-wake', (req, res) => {
+  const token = String(req.query.token || '');
+  const expected = String(process.env.CRON_WAKE_TOKEN || '');
+
+  // If token is configured, require it
+  if (expected && token !== expected) {
+    return res.status(401).json({ ok: false });
+  }
+
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({ ok: true, ts: Date.now() });
+});
+
 
 // Vanity redirects
 app.get(['/admin', '/admin/', '/booking/admin', '/booking/admin/'], (req, res) => {

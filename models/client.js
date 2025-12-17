@@ -89,7 +89,11 @@ const clientSchema = new mongoose.Schema({
       return Number.isFinite(n) && n >= 0 ? n : 0;
     }
   },
-  otpLastRequestedAt: { type: Date }
+  otpLastRequestedAt: { type: Date },
+// Profile verification / upgrade
+requiresNamePinUpgrade: { type: Boolean, default: true },
+nameVerifiedAt: { type: Date }
+
 });
 
 module.exports = mongoose.models.Client || mongoose.model('Client', clientSchema);
