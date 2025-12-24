@@ -130,33 +130,14 @@ async function hydrateApptIfNeeded(appt) {
   return hydrateAppt(appt);
 }
 
-function coerceTokens(appt, extra = {}) {
-  // dates we try
-  let date = appt.date ?? extra.date ?? appt.day ?? appt.dateStr
-          ?? appt.dateISO ?? appt.dateUtc ?? appt.dateLocal
-          ?? appt.startDate ?? appt.slot?.date ?? null;
-
-  // human-readable time strings we try first
-  let time = appt.time ?? extra.time ?? appt.slot?.time ?? appt.timeStr ?? null;
-
-  // canonical start (Date/ISO/ms). Keep startTime out of "time" and use it here.
-  let start = appt.start ?? extra.start
-           ?? appt.startTime ?? appt.startISO ?? appt.startAt ?? appt.startsAt ?? appt.startDatetime
-           ?? appt.appt?.startTime ?? appt.appt?.start ?? appt.appointment?.startTime
-           ?? null;
-
-  // numeric minutes → HH:MM
-  if (!time && Number.isFinite(appt?.timeMinutes))        time = mmToHHMM(appt.timeMinutes);
-  if (!time && Number.isFinite(appt?.startMinutes))       time = mmToHHMM(appt.startMinutes);
-  if (!time && Number.isFinite(appt?.slot?.startMinutes)) time = mmToHHMM(appt.slot.startMinutes);
-
-  // if we have date & time strings but no start, try building one
-  if (!start && date && time) {
-    const tryStart = new Date(`${date}T${time}`);
-    if (!Number.isNaN(tryStart.valueOf())) start = tryStart;
-  }
-  return { date, time, start };
+function buildTokensPassthrough(appt, extra = {}) {
+  return {
+    // passthrough ONLY — no parsing, no conversions
+    date: extra.date ?? appt?.date ?? appt?.dateStr ?? appt?.slot?.date ?? '',
+    time: extra.time ?? appt?.time ?? appt?.timeStr ?? appt?.slot?.time ?? '',
+  };
 }
+
 
 async function ensureClientLoaded(appt) {
   const cid = appt?.clientId;
@@ -270,15 +251,29 @@ try {
     }
 
     // 4) build tokens & body
-    let tokens = {
-      ...coerceTokens(appt, extra),
-      //clientName: `${clientData?.firstName ?? ''} ${clientData?.lastName ?? ''}`.trim(),
-      clientName: ` ${clientData?.firstName ?? ''}`.trim(),
-      service: appt?.serviceId?.name || appt?.service || '',
-      message: extra?.message || ''
-    };
-   // Fill/format {date}/{time} from whatever we have (startTime, etc.)
-   tokens = ensureDateTimeOnCtx(tokens);
+let tokens = {
+  ...buildTokensPassthrough(appt, extra),
+
+  // keep existing behavior
+  clientName: ` ${clientData?.firstName ?? ''}`.trim(),
+  service: appt?.serviceId?.name || appt?.service || '',
+  message: extra?.message || ''
+};
+
+// Optional guardrail (recommended):
+if (!tokens.date || !tokens.time) {
+  console.warn('[sendSMS] Missing passthrough date/time tokens', {
+    type: t,
+    apptId: appt?._id,
+    date: tokens.date,
+    time: tokens.time,
+    apptDate: appt?.date,
+    apptTime: appt?.time,
+    extraDate: extra?.date,
+    extraTime: extra?.time
+  });
+}
+
     let body = populate(tpl.sms || '', tokens);
     body = ensureBookingLink(body);
     if (!body?.trim()) {
@@ -310,9 +305,13 @@ if (clientData?.requiresNamePinUpgrade === true) {
   };
 }
     payload = { body, from, to };
-    if (process.env.BACKEND_BASE_URL) {
-      payload.statusCallback = `${process.env.BACKEND_BASE_URL}/api/twilio/status-callback`;
-    }
+    const base = process.env.BACKEND_BASE_URL;
+const isLocal = !base || /localhost|127\.0\.0\.1/i.test(base);
+
+if (!isLocal) {
+  payload.statusCallback = `${base.replace(/\/$/, '')}/api/twilio/status-callback`;
+}
+
     //console.log(`📩 SMS final body: `, payload);
     const result = await twilioClient.messages.create(payload);
     console.log(`📩 SMS (${t}) sent to ${to}`);
