@@ -38,6 +38,23 @@ function deriveDateFromAny(obj) {
   return isValidDate(d) ? d : null;
 }
 
+function to12Hour(time24) {
+  if (!time24) return time24;
+
+  // supports "HH:MM" or "HH:MM:SS"
+  const m = String(time24).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return time24; // already formatted or unexpected
+
+  let hour = parseInt(m[1], 10);
+  const minute = m[2];
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+
+  hour = hour % 12;
+  if (hour === 0) hour = 12;
+
+  return `${hour}:${minute} ${ampm}`;
+}
+
 const TZ = process.env.TZ || 'America/New_York';
 
 function ensureDateTimeOnCtx(ctx) {
@@ -259,6 +276,8 @@ let tokens = {
   service: appt?.serviceId?.name || appt?.service || '',
   message: extra?.message || ''
 };
+
+tokens.time = to12Hour(tokens.time);
 
 // Optional guardrail (recommended):
 if (!tokens.date || !tokens.time) {
