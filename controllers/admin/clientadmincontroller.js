@@ -1,99 +1,234 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+
 const Client = require('../../models/client');
 const Appointment = require('../../models/appointment');
+const Otp = require('../../models/otp');
 const sendSMS = require('../../utils/sendSMS');
 const sendOtpSMS = require('../../utils/sendOtpSMS');
-const bcrypt = require('bcryptjs');
-const Otp = require('../../models/otp');  
-let opsAlert = async () => {};               
-try { ({ opsAlert } = require('../../lib/opsAlert')); } catch {/*ignore*/}
 
-function onlyDigits(s=''){ return String(s).replace(/\D/g,''); }
-function phone10(p){ const d=onlyDigits(p); return d.length>=10 ? d.slice(-10) : d; }
-function last4(p){ return onlyDigits(p).slice(-4); }
+let opsAlert = async () => {};
+try { ({ opsAlert } = require('../../lib/opsAlert')); } catch {/* ignore */}
+
+function onlyDigits(s = '') { return String(s).replace(/\D/g, ''); }
+function phone10(p = '') {
+  const d = onlyDigits(p);
+  return d.length >= 10 ? d.slice(-10) : d;
+}
+function last4(p = '') { return onlyDigits(p).slice(-4); }
+function maskPhone(p = '') {
+  const d = phone10(p);
+  return d.length === 10 ? `(***) ***-${d.slice(-4)}` : '';
+}
+function normalizePhone(p = '') { return phone10(p); }
+function safeClient(doc) {
+  const o = doc?.toObject ? doc.toObject() : { ...(doc || {}) };
+  delete o.pinHash;
+  delete o.otpHash;
+  delete o.otpExpiresAt;
+  delete o.otpIssuedAt;
+  delete o.otpVerifyAttempts;
+  delete o.otpRequestCount;
+  delete o.otpLastRequestedAt;
+  delete o.pinOtpHash;
+  delete o.pinOtpExpires;
+  delete o.pinOtpAttempts;
+  return o;
+}
+function isAdminRoute(req) {
+  const url = String(req.originalUrl || req.baseUrl || '');
+  return /\/api\/admin\//.test(url);
+}
+function getOtpPurpose(raw, fallback = 'reset') {
+  const p = String(raw || fallback).trim().toLowerCase();
+  return ['signup', 'reset', 'login', 'verify', 'pin_set'].includes(p) ? p : fallback;
+}
+function manualPinHelpPayload(phone = '', reason = 'otp_failed') {
+  const suffix = last4(phone);
+  return {
+    mode: 'manual_support',
+    reason,
+    keyword: PIN_HELP_KEYWORD,
+    supportPhone: SUPPORT_SMS,
+    supportPhoneDisplay: SUPPORT.tech,
+    message: suffix
+      ? `If the code does not arrive or keeps failing, text ${PIN_HELP_KEYWORD} to ${SUPPORT.tech} from the phone ending in ${suffix} and Rakie Salon will help you manually.`
+      : `If the code does not arrive or keeps failing, text ${PIN_HELP_KEYWORD} to ${SUPPORT.tech} and Rakie Salon will help you manually.`
+  };
+}
 
 const SUPPORT = { tech: '(585) 414-6041', mgr: '(585) 957-6404' };
-const SALON_ALERT_EMAIL = 'rakiesalon@gmail.com'; // or use opsAlert(..)
+const SUPPORT_SMS = '5854146041';
+const PIN_HELP_KEYWORD = 'RAKIE PIN';
+const PIN_LOCK_MAX_ATTEMPTS = 5;
+const PIN_LOCK_MINUTES = 15;
+const OTP_TTL_MINUTES = 10;
+const OTP_VERIFIED_TTL_MINUTES = 15;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_REQUESTS_PER_HOUR = 5;
 
-const toInt = (v, d = 0) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
-};
+const otpBuckets = new Map(); // key => { count, resetAt }
 
-function tooManyOtpRequests(doc) {
-  const count = toInt(doc.otpRequestCount, 0);
-  const last  = doc.otpLastRequestedAt ? new Date(doc.otpLastRequestedAt) : null;
-  const within24h = last ? (Date.now() - last.getTime()) < 24 * 60 * 60 * 1000 : false;
-  // allow first 3 sends within 24h; block the 4th
-  return within24h && count >= 3;
-}
-
-// --- helpers ---
-const normalizePhone = (p) => onlyDigits(p).slice(-10); // last 10 digits
-const safeClient = (c) => {
-  const o = c.toObject ? c.toObject() : c;
-  delete o.pinHash; delete o.pinOtpHash; delete o.pinOtpExpires; delete o.pinOtpAttempts;
-  return o;
-};
-
-// very light in-memory throttle: 5 OTP requests / hr / phone
-const otpBuckets = new Map(); // phone -> {count, resetAt}
-function canRequestOtp(phone) {
+function canRequestOtp(phone, purpose) {
+  const key = `${purpose}:${phone}`;
   const now = Date.now();
   const hour = 60 * 60 * 1000;
-  const b = otpBuckets.get(phone);
-  if (!b || b.resetAt < now) { otpBuckets.set(phone, { count: 1, resetAt: now + hour }); return true; }
-  if (b.count >= 5) return false;
-  b.count += 1; return true;
+  const bucket = otpBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    otpBuckets.set(key, { count: 1, resetAt: now + hour });
+    return true;
+  }
+  if (bucket.count >= OTP_REQUESTS_PER_HOUR) return false;
+  bucket.count += 1;
+  return true;
 }
-// transient OTPs for phones that don't exist yet (provisional flow)
-const transientOtps = new Map(); // phone -> { hash, expires, attempts }
-function setTransientOtp(phone, hash, ttlMs = 10 * 60 * 1000) {
-  transientOtps.set(phone, { hash, expires: Date.now() + ttlMs, attempts: 0 });
-}
-function getTransientOtp(phone) {
-  const t = transientOtps.get(phone);
-  if (!t) return null;
-  if (Date.now() > t.expires) { transientOtps.delete(phone); return null; }
-  return t;
-}
-function clearTransientOtp(phone) { transientOtps.delete(phone); }
 
-// Get all clients with optional search
+function generateOtpCode() {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+async function upsertOtp({ phone, purpose, code }) {
+  const codeHash = await bcrypt.hash(String(code), 10);
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  await Otp.findOneAndUpdate(
+    { phone, purpose },
+    {
+      $set: {
+        codeHash,
+        attempts: 0,
+        verifiedAt: null,
+        expiresAt,
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  return { expiresAt };
+}
+
+async function findActiveOtp(phone, purpose) {
+  const doc = await Otp.findOne({ phone, purpose }).exec();
+  if (!doc) return null;
+  if (!doc.expiresAt || doc.expiresAt.getTime() <= Date.now()) {
+    await Otp.deleteOne({ _id: doc._id }).catch(() => {});
+    return null;
+  }
+  return doc;
+}
+
+async function verifyOtpCode({ phone, purpose, otp, markVerified = false, consume = false }) {
+  const doc = await findActiveOtp(phone, purpose);
+  if (!doc) return { ok: false, reason: 'missing_or_expired' };
+
+  if ((doc.attempts || 0) >= OTP_MAX_ATTEMPTS) {
+    await Otp.deleteOne({ _id: doc._id }).catch(() => {});
+    return { ok: false, reason: 'too_many_attempts' };
+  }
+
+  const matched = await bcrypt.compare(String(otp || ''), doc.codeHash);
+  if (!matched) {
+    doc.attempts = Number(doc.attempts || 0) + 1;
+    await doc.save();
+    if (doc.attempts >= OTP_MAX_ATTEMPTS) {
+      await Otp.deleteOne({ _id: doc._id }).catch(() => {});
+      return { ok: false, reason: 'too_many_attempts' };
+    }
+    return { ok: false, reason: 'invalid' };
+  }
+
+  if (consume) {
+    await Otp.deleteOne({ _id: doc._id }).catch(() => {});
+    return { ok: true };
+  }
+
+  if (markVerified) {
+    doc.verifiedAt = new Date();
+    doc.attempts = 0;
+    await doc.save();
+  }
+
+  return { ok: true };
+}
+
+async function consumeVerifiedOtp(phone, purpose) {
+  const doc = await findActiveOtp(phone, purpose);
+  if (!doc || !doc.verifiedAt) return false;
+  const ageMs = Date.now() - new Date(doc.verifiedAt).getTime();
+  if (ageMs > OTP_VERIFIED_TTL_MINUTES * 60 * 1000) {
+    await Otp.deleteOne({ _id: doc._id }).catch(() => {});
+    return false;
+  }
+  await Otp.deleteOne({ _id: doc._id }).catch(() => {});
+  return true;
+}
+
+async function issueOtpAndSend({ phone, purpose, client = null }) {
+  const code = generateOtpCode();
+  await upsertOtp({ phone, purpose, code });
+  try {
+    await sendOtpSMS({ phone, code, ttlMins: OTP_TTL_MINUTES, client });
+    return { ok: true };
+  } catch (err) {
+    await Otp.deleteMany({ phone, purpose }).catch(() => {});
+    return { ok: false, err };
+  }
+}
+
+function otpFailureResponse(res, phone, reason) {
+  const fallback = manualPinHelpPayload(phone, reason);
+  if (reason === 'too_many_attempts') {
+    return res.status(429).json({
+      error: 'Too many incorrect codes. Please request a new code or contact Rakie Salon.',
+      ...fallback,
+    });
+  }
+  if (reason === 'missing_or_expired') {
+    return res.status(410).json({
+      error: 'This code is missing or expired. Please request a new code.',
+      ...fallback,
+    });
+  }
+  return res.status(400).json({ error: 'Invalid code' });
+}
+
 exports.getClients = async (req, res) => {
   try {
-   const { search, phone } = req.query;
+    const { search, phone } = req.query;
 
-   // ✅ Client-facing probe: return a single client (or null)
-   if (phone) {
-     const p10 = String(phone).replace(/\D/g, '').slice(-10);
-     if (!p10) return res.json(null);
-     const one = await Client.findOne({ phone: p10 }).lean();
-     return res.json(one || null);
-   }
+    if (phone) {
+      const p10 = phone10(phone);
+      if (!p10) return res.json(null);
+      const one = await Client.findOne({ phone: p10 }).lean();
+      return res.json(one || null);
+    }
 
-    const query = search
+    const rawSearch = String(search || '').trim();
+    const searchDigits = onlyDigits(rawSearch);
+    const query = rawSearch
       ? {
           $or: [
-            { firstName: { $regex: search, $options: 'i' } },
-            { lastName: { $regex: search, $options: 'i' } },
-            { phone: { $regex: search, $options: 'i' } },
+            { firstName: { $regex: rawSearch, $options: 'i' } },
+            { lastName: { $regex: rawSearch, $options: 'i' } },
+            ...(searchDigits
+              ? [
+                  ...(searchDigits.length >= 10 ? [{ phone: phone10(searchDigits) }] : []),
+                  { phone: { $regex: searchDigits } },
+                ]
+              : [{ phone: { $regex: rawSearch, $options: 'i' } }]),
           ],
         }
       : {};
 
     const clients = await Client.find(query);
-    res.json(clients);
+    return res.json(clients);
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-    }
-
+    return res.status(500).json({ error: 'Server error' });
+  }
 };
 
-// Update client profile
 exports.updateClient = async (req, res) => {
   try {
-       const body = { ...req.body };
-    // ✅ Coerce requiresNamePinUpgrade robustly
+    const body = { ...req.body };
+
     if (Object.prototype.hasOwnProperty.call(body, 'requiresNamePinUpgrade')) {
       const v = body.requiresNamePinUpgrade;
       if (typeof v === 'string') {
@@ -104,7 +239,6 @@ exports.updateClient = async (req, res) => {
       }
     }
 
-    // ✅ Coerce nameVerifiedAt robustly
     if (Object.prototype.hasOwnProperty.call(body, 'nameVerifiedAt')) {
       const v = body.nameVerifiedAt;
       if (!v || v === 'null' || v === 'undefined' || v === '') {
@@ -115,263 +249,261 @@ exports.updateClient = async (req, res) => {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, 'phone')) {
+      body.phone = normalizePhone(body.phone);
+      if (!/^\d{10}$/.test(body.phone)) {
+        return res.status(400).json({ error: 'Phone must be 10 digits' });
+      }
+    }
 
-       let pinChanged = false;
-       if (body.pin) {
-        if (!/^\d{4}$/.test(String(body.pin))) {
-         return res.status(400).json({ error: 'PIN must be 4 digits' });
-       }
+    let pinChanged = false;
+    if (body.pin) {
+      if (!/^\d{4}$/.test(String(body.pin))) {
+        return res.status(400).json({ error: 'PIN must be 4 digits' });
+      }
+      let pinPhone = body.phone || normalizePhone(req.body?.phone || '');
+      if (!pinPhone) {
+        const existingClient = await Client.findById(req.params.id).select('phone').lean();
+        pinPhone = normalizePhone(existingClient?.phone || '');
+      }
+      if (String(body.pin) === last4(pinPhone)) {
+        return res.status(400).json({ error: "PIN cannot be your phone number's last 4 digits" });
+      }
       body.pinHash = await bcrypt.hash(String(body.pin), 10);
       body.pinSetAt = new Date();
       body.pinIsDefault = false;
+      body.failedPinAttempts = 0;
+      body.pinLockedUntil = undefined;
       pinChanged = true;
       delete body.pin;
     }
-   const updated = await Client.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true });
-   if (!updated) return res.status(404).json({ error: 'Client not found' });
-   const safe = updated.toObject(); delete safe.pinHash;
-   res.json(safe); // respond first
 
-   if (pinChanged) {
-     const c = updated.toObject ? updated.toObject() : updated;
-     setImmediate(() => {
-       sendSMS('pin_changed', { clientId: c }, {
-         message: 'Your PIN was updated. If you did not request this, please contact us.'
-       }).catch(err => console.error('[updateClient] sendSMS error:', err?.code || '', err?.message || err));
-     });
-   }
+    const updated = await Client.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true });
+    if (!updated) return res.status(404).json({ error: 'Client not found' });
+
+    const safe = safeClient(updated);
+    res.json(safe);
+
+    if (pinChanged) {
+      const c = updated.toObject ? updated.toObject() : updated;
+      setImmediate(() => {
+        sendSMS('pin_changed', { clientId: c }, {
+          message: 'Your PIN was updated. If you did not request this, please contact Rakie Salon.'
+        }).catch(err => console.error('[updateClient] sendSMS error:', err?.message || err));
+      });
+    }
   } catch (err) {
     console.error('updateClient failed:', err);
-    res.status(500).json({ error: 'Server error updating client' });
+    return res.status(500).json({ error: 'Server error updating client' });
   }
 };
 
-// POST /api/clients/login  { phone, pin, updateInfo? }
 exports.loginClient = async (req, res) => {
   try {
     const { phone, pin, updateInfo } = req.body || {};
     const p10 = phone10(phone);
     if (p10.length !== 10) return res.status(400).json({ error: 'Phone must be 10 digits' });
-    if (!/^\d{4}$/.test(String(pin||''))) return res.status(400).json({ error: 'PIN must be 4 digits' });
+    if (!/^\d{4}$/.test(String(pin || ''))) return res.status(400).json({ error: 'PIN must be 4 digits' });
 
-    const doc = await Client.findOne({ phone: p10 }).select('+pinHash').lean();
-    if (!doc || !doc.pinHash) return res.status(409).json({ error: 'No PIN yet' }); // frontend will start OTP
+    const doc = await Client.findOne({ phone: p10 }).select('+pinHash').exec();
+    if (!doc || !doc.pinHash) {
+      return res.status(409).json({
+        error: 'No PIN on file. Please verify by code to set your PIN.',
+        requiresOtp: true,
+        otpPurpose: 'reset',
+        phone: p10,
+      });
+    }
+
+    if (doc.pinLockedUntil && new Date(doc.pinLockedUntil) > new Date()) {
+      return res.status(423).json({
+        error: 'Too many incorrect PIN attempts. Reset your PIN by code or try again later.',
+        retryAt: doc.pinLockedUntil,
+        requiresOtp: true,
+        otpPurpose: 'reset',
+        phone: p10,
+      });
+    }
 
     const ok = await bcrypt.compare(String(pin), doc.pinHash);
-    const isDefault = ok && (String(pin) === last4(doc.phone)) || doc.pinIsDefault;
-    if (!ok) return res.status(401).json({ error: 'Invalid phone or PIN' });
+    if (!ok) {
+      const failed = Number(doc.failedPinAttempts || 0) + 1;
+      const update = { failedPinAttempts: failed };
+      if (failed >= PIN_LOCK_MAX_ATTEMPTS) {
+        update.failedPinAttempts = 0;
+        update.pinLockedUntil = new Date(Date.now() + PIN_LOCK_MINUTES * 60 * 1000);
+      }
+      await Client.updateOne({ _id: doc._id }, { $set: update });
+      if (failed >= PIN_LOCK_MAX_ATTEMPTS) {
+        return res.status(423).json({
+          error: `Too many incorrect PIN attempts. Reset your PIN by code or try again in ${PIN_LOCK_MINUTES} minutes.`,
+          retryAt: update.pinLockedUntil,
+          requiresOtp: true,
+          otpPurpose: 'reset',
+          phone: p10,
+        });
+      }
+      return res.status(401).json({ error: 'Invalid phone or PIN' });
+    }
 
-    // If default PIN or "Update my info" -> send to Intake (force set PIN on form)
-    const mustChangePin = !!isDefault;
+    if ((doc.failedPinAttempts || 0) > 0 || doc.pinLockedUntil) {
+      doc.failedPinAttempts = 0;
+      doc.pinLockedUntil = undefined;
+      await doc.save();
+    }
+
+    const usingDefaultPin = !!doc.pinIsDefault && String(pin) === last4(doc.phone);
+    const mustChangePin = !!doc.requiresNamePinUpgrade;
     const proceedToIntake = mustChangePin || !!updateInfo;
-    const safe = { ...doc }; delete safe.pinHash;
-    return res.json({ ...safe, mustChangePin, proceedToIntake });
+    return res.json({ ...safeClient(doc), mustChangePin, proceedToIntake, usingDefaultPin });
   } catch (e) {
     console.error('loginClient error', e);
-   return res.status(500).json({ error: 'Login failed' });
+    return res.status(500).json({ error: 'Login failed' });
   }
 };
 
-// POST /api/clients/pin/request-otp  { phone }
 exports.requestPinOtp = async (req, res) => {
   try {
-    const raw = req.body?.phone;
-    const phone = (String(raw || '').replace(/\D/g, '')).slice(-10);
-    if (!phone) return res.status(400).json({ error: 'phone_required' });
+    const phone = normalizePhone(req.body?.phone);
+    const purpose = getOtpPurpose(req.body?.purpose, 'reset');
+    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'Phone must be 10 digits' });
 
-    // 6-digit code, 10-min expiry
-    const code = String(Math.floor(100000 + Math.random() * 900000)); // ← 6 digits
-    const codeHash = await bcrypt.hash(code, 10);
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const existingClient = await Client.findOne({ phone }).select('firstName lastName phone contactPreferences').lean();
+    if (purpose === 'reset' && !existingClient) {
+      return res.status(404).json({ error: 'No client was found for this phone number.' });
+    }
 
-    await Otp.findOneAndUpdate(
-      { phone, purpose: 'pin_set' },
-      { codeHash, attempts: 0, expiresAt },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    if (!canRequestOtp(phone, purpose)) {
+      return res.status(429).json({
+        error: 'Too many code requests. Please try again later.',
+        ...manualPinHelpPayload(phone, 'rate_limited')
+      });
+    }
 
-    // ✅ use the dedicated OTP sender (handles E.164, service SID, callbacks, etc.)
-    await sendOtpSMS({ phone, code, ttlMins: 10, meta: { purpose: 'pin_set' } });
+    const result = await issueOtpAndSend({ phone, purpose, client: existingClient || { phone } });
+    if (!result.ok) {
+      console.error('requestPinOtp send failed:', result.err?.message || result.err);
+      try { await opsAlert('[Rakie OTP] send failed', { where: 'requestPinOtp', phone, purpose, err: String(result.err) }); } catch {}
+      return res.status(502).json({
+        error: 'We could not send the code right now.',
+        ...manualPinHelpPayload(phone, 'send_failed')
+      });
+    }
 
-    return res.status(204).end();
+    return res.json({ ok: true, purpose, ttlMins: OTP_TTL_MINUTES, maskedPhone: maskPhone(phone) });
   } catch (err) {
+    console.error('requestPinOtp failed:', err);
     try { await opsAlert('[Rakie OTP] request failed', { where: 'requestPinOtp', err: String(err) }); } catch {}
-    return res.status(500).json({ error: 'otp_request_failed' });
+    return res.status(500).json({ error: 'Could not start phone verification.' });
   }
 };
 
 exports.verifyPinOtp = async (req, res) => {
   try {
     const phone = normalizePhone(req.body?.phone);
-    const code = (req.body?.code || '').trim();
-    if (!phone || !code) return res.status(400).json({ error: 'phone_and_code_required' });
+    const otp = String(req.body?.otp || '').trim();
+    const purpose = getOtpPurpose(req.body?.purpose, 'signup');
+    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'Phone must be 10 digits' });
+    if (!/^\d{6}$/.test(otp)) return res.status(400).json({ error: 'Code must be 6 digits' });
 
-    const otp = await Otp.findOne({ phone, purpose: 'pin_set' });
-    if (!otp || otp.expiresAt <= new Date()) return res.status(400).json({ error: 'otp_expired_or_missing' });
-    if (otp.attempts >= 5) return res.status(429).json({ error: 'too_many_attempts' });
+    const result = await verifyOtpCode({ phone, purpose, otp, markVerified: true });
+    if (!result.ok) return otpFailureResponse(res, phone, result.reason);
 
-    const ok = await bcrypt.compare(code, otp.codeHash);
-    if (!ok) {
-      await Otp.updateOne({ _id: otp._id }, { $inc: { attempts: 1 } });
-      return res.status(400).json({ error: 'invalid_code' });
-    }
-
-    await Otp.deleteOne({ _id: otp._id }); // consume OTP
-   // Notify: code verified
-   try {
-     const clientDoc = await Client.findOne({ phone }).select('+phone firstName lastName contactPreferences').lean();
-     if (clientDoc) await sendSMS('pin_verified', { clientId: clientDoc });
-   } catch {/*ignore*/}
-
-    return res.status(204).end();
+    return res.json({ ok: true, verified: true, purpose });
   } catch (err) {
-    try { await opsAlert('[Rakie OTP] verify failed', { where: 'verifyPinOtp', err: String(err) }); } catch {}
-    return res.status(500).json({ error: 'otp_verify_failed' });
+    console.error('verifyPinOtp failed:', err);
+    return res.status(500).json({ error: 'Could not verify the code.' });
   }
 };
 
-// POST /api/clients/pin/set { phone, otp, pin, pinConfirm }
 exports.setPinWithOtp = async (req, res) => {
   try {
     const phone = normalizePhone(req.body?.phone);
-    const { otp, pin } = req.body || {};
+    const otp = String(req.body?.otp || '').trim();
+    const purpose = getOtpPurpose(req.body?.purpose, 'reset');
+    const pin = String(req.body?.pin || '').trim();
+    const pinConfirm = String(req.body?.pinConfirm || '').trim();
 
     if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'Phone must be 10 digits' });
-    if (!/^\d{6}$/.test(String(otp||''))) return res.status(400).json({ error: 'OTP must be 6 digits' });
-    if (!/^\d{4}$/.test(String(pin||''))) return res.status(400).json({ error: 'PIN must be 4 digits' });
+    if (!/^\d{6}$/.test(otp)) return res.status(400).json({ error: 'Code must be 6 digits' });
+    if (!/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+    if (pin !== pinConfirm) return res.status(400).json({ error: 'PINs do not match' });
+    if (pin === last4(phone)) return res.status(400).json({ error: "PIN cannot be your phone number's last 4 digits" });
 
-    // Look up the OTP issued by requestPinOtp (purpose: 'pin_set')
-    const rec = await Otp.findOne({ phone, purpose: 'pin_set' });
-    if (!rec || rec.expiresAt <= new Date()) return res.status(410).json({ error: 'OTP expired' });
+    const verify = await verifyOtpCode({ phone, purpose, otp, consume: true });
+    if (!verify.ok) return otpFailureResponse(res, phone, verify.reason);
 
-    const ok = await bcrypt.compare(String(otp), rec.codeHash);
-    if (!ok) {
-      await Otp.updateOne({ _id: rec._id }, { $inc: { attempts: 1 } });
-try {
-  const safe = safeClient(client);
-  await sendSMS('pin_changed', { clientId: safe }, {
-    message: 'Your PIN was set after OTP verification.'
-  });
-} catch { /* ignore */ }
-
-      return res.status(401).json({ error: 'Invalid OTP' });
-    }
-
-    // Consume OTP
-    await Otp.deleteOne({ _id: rec._id });
-
-    // Create or update client with new PIN
-    let client = await Client.findOne({ phone }).select('+pinHash');
+    const client = await Client.findOne({ phone }).select('+pinHash').exec();
     if (!client) {
-      client = await Client.create({
-        phone,
-        firstName: 'Guest',
-        lastName: phone.slice(-4),
-        pinHash: await bcrypt.hash(String(pin), 10),
-        pinSetAt: new Date(),
-        provisional: true,
-      });
-    } else {
-      client.pinHash = await bcrypt.hash(String(pin), 10);
-      client.pinSetAt = new Date();
-      client.pinIsDefault = false;
-      await client.save();
+      return res.status(404).json({ error: 'Client not found for this phone number.' });
     }
+
+    client.pinHash = await bcrypt.hash(pin, 10);
+    client.pinSetAt = new Date();
+    client.pinIsDefault = false;
+    client.failedPinAttempts = 0;
+    client.pinLockedUntil = undefined;
+    await client.save();
 
     const safe = safeClient(client);
-try {
-  const safe = safeClient(client);
-  await sendSMS('pin_changed', { clientId: safe });
-} catch {/*ignore*/}
-    return res.json(safe);
+    res.json(safe);
+
+    setImmediate(() => {
+      sendSMS('pin_changed', { clientId: safe }, {
+        message: 'Your Rakie Salon PIN was set successfully. Keep it private.'
+      }).catch(err => console.error('[setPinWithOtp] sendSMS error:', err?.message || err));
+    });
   } catch (e) {
     console.error('setPinWithOtp error:', e);
     return res.status(500).json({ error: 'Failed to set PIN' });
   }
 };
 
-// POST /api/clients/pin/verify  { phone, otp }
-exports.verifyOtpOnly = async (req, res) => {
+exports.verifyOtpOnly = exports.verifyPinOtp;
+
+exports.getClientDetails = async (req, res) => {
   try {
-    const p10 = phone10(req.body?.phone || '');
-    const { otp } = req.body || {};
-    if (p10.length !== 10) return res.status(400).json({ error: 'Phone must be 10 digits' });
-    if (!/^\d{6}$/.test(String(otp||''))) return res.status(400).json({ error: 'OTP must be 6 digits' });
+    const client = await Client.findById(req.params.id)
+      .select('-pinHash -pinOtpHash -pinOtpExpires -pinOtpAttempts');
 
-    const client = await Client.findOne({ phone: p10 }).select('+otpHash +otpExpiresAt otpVerifyAttempts');
-    if (!client || !client.otpHash) return res.status(404).json({ error: 'No OTP pending' });
-    if (client.otpVerifyAttempts >= 3) return res.status(423).json({ error: 'Too many attempts' });
-    if (!client.otpExpiresAt || client.otpExpiresAt < new Date()) return res.status(410).json({ error: 'OTP expired' });
-
-    const ok = await bcrypt.compare(String(otp), client.otpHash);
-    if (!ok) {
-      client.otpVerifyAttempts += 1;
-      await client.save();
-      return res.status(401).json({ error: 'Invalid code' });
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
     }
-    // success → clear OTP fields; client proceeds to Intake to set PIN
-    client.otpHash = undefined;
-    client.otpExpiresAt = undefined;
-    client.otpIssuedAt = undefined;
-    client.otpVerifyAttempts = 0;
-    await client.save();
 
-    const minimal = { _id: client._id, phone: client.phone, provisional: !client.firstName };
-    return res.json(minimal);
-  } catch (e) {
-    console.error('verifyOtpOnly error', e);
-    return res.status(500).json({ error: 'OTP verify failed' });
+    const lastCompletedAppointment = await Appointment.findOne({
+      clientId: req.params.id,
+      status: 'completed',
+    })
+      .sort({ date: -1, time: -1 })
+      .select('date service');
+
+    return res.json({
+      _id: client._id,
+      firstName: client.firstName,
+      lastName: client.lastName,
+      phone: client.phone,
+      email: client.email,
+      dob: client.dob,
+      nickname: client.nickname,
+      notes: client.notes,
+      appointmentHistory: client.appointmentHistory,
+      servicePreferences: client.servicePreferences,
+      paymentInfo: client.paymentInfo,
+      profilePhoto: client.profilePhoto,
+      visitFrequency: client.visitFrequency,
+      contactPreferences: {
+        method: client.contactPreferences?.method,
+        optInPromotions: client.contactPreferences?.optInPromotions === true,
+        emailDisabled: client.contactPreferences?.emailDisabled === true,
+      },
+      lastCompletedAppointment,
+    });
+  } catch (err) {
+    console.error('Error fetching client details:', err);
+    return res.status(400).json({ error: 'Client not found' });
   }
 };
 
-exports.getClientDetails = async (req, res) => {
-    try {
-        const client = await Client.findById(req.params.id)
-  .select('-pinHash -pinOtpHash -pinOtpExpires -pinOtpAttempts');
-
-
-        if (!client) {
-            return res.status(404).json({ error: 'Client not found' });
-        }
-
-        const lastCompletedAppointment = await Appointment.findOne({
-            clientId: req.params.id,
-            status: 'completed',
-        })
-            .sort({ date: -1, time: -1 })
-            .select('date service');
-
-        res.json({
-            _id: client._id,
-            firstName: client.firstName,
-            lastName: client.lastName,
-            phone: client.phone,
-            email: client.email,
-            dob: client.dob,
-            nickname: client.nickname,
-            notes: client.notes,
-            appointmentHistory: client.appointmentHistory,
-            servicePreferences: client.servicePreferences,
-            paymentInfo: client.paymentInfo,
-            profilePhoto: client.profilePhoto,
-            visitFrequency: client.visitFrequency,
-            contactPreferences: {
-                method: client.contactPreferences?.method,
-                optInPromotions: client.contactPreferences?.optInPromotions === true,
-                emailDisabled: client.contactPreferences?.emailDisabled === true
-            },
-            lastCompletedAppointment
-        });
-
-    } catch (err) {
-        console.error('Error fetching client details:', err);
-        res.status(400).json({ error: 'Client not found' });
-    }
-};
-
-
-
-// Upload client profile photo
 exports.uploadClientPhoto = async (req, res) => {
   try {
     const filePath = `/uploads/${req.file.filename}`;
@@ -380,14 +512,13 @@ exports.uploadClientPhoto = async (req, res) => {
       { profilePhoto: filePath },
       { new: true }
     );
-    res.json({ url: client.profilePhoto });
+    return res.json({ url: client.profilePhoto });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to upload image' });
+    return res.status(500).json({ error: 'Failed to upload image' });
   }
 };
 
-// Create client
 exports.createClient = async (req, res) => {
   try {
     const {
@@ -400,89 +531,112 @@ exports.createClient = async (req, res) => {
       contactPreferences,
       pin,
       requiresNamePinUpgrade,
-      nameVerifiedAt
-    } = req.body;
+      nameVerifiedAt,
+      otp,
+      otpPurpose,
+    } = req.body || {};
 
-    if (!firstName || !lastName || !phone) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    const phoneDigits = normalizePhone(phone);
+    if (!firstName || !lastName || !/^\d{10}$/.test(phoneDigits)) {
+      return res.status(400).json({ error: 'First name, last name, and a valid 10-digit phone are required' });
     }
 
-    const hasCallerPin = /^\d{4}$/.test(String(pin || ''));
-    const effectivePin = hasCallerPin ? String(pin) : phone.slice(-4);
+    const adminCreated = isAdminRoute(req);
+    const suppliedPin = /^\d{4}$/.test(String(pin || '')) ? String(pin) : '';
+    const defaultPin = last4(phoneDigits);
+    let effectivePin = suppliedPin;
+    let pinIsDefault = false;
+
+    if (adminCreated) {
+      effectivePin = suppliedPin || defaultPin;
+      pinIsDefault = effectivePin === defaultPin;
+    } else {
+      const purpose = getOtpPurpose(otpPurpose, 'signup');
+      let verified = false;
+      if (/^\d{6}$/.test(String(otp || ''))) {
+        const direct = await verifyOtpCode({ phone: phoneDigits, purpose, otp: String(otp), consume: true });
+        verified = direct.ok;
+      } else {
+        verified = await consumeVerifiedOtp(phoneDigits, purpose);
+      }
+      if (!verified) {
+        return res.status(403).json({
+          error: 'Phone verification is required before creating your profile.',
+          requiresOtp: true,
+          otpPurpose: 'signup',
+        });
+      }
+
+      if (!suppliedPin) return res.status(400).json({ error: 'PIN is required' });
+      if (suppliedPin === defaultPin) {
+        return res.status(400).json({ error: "PIN cannot be your phone number's last 4 digits" });
+      }
+      pinIsDefault = false;
+    }
 
     const newClient = {
-      firstName,
-      lastName,
-      phone,
-      ...(email && { email: email.trim() }),
+      firstName: String(firstName).trim(),
+      lastName: String(lastName).trim(),
+      phone: phoneDigits,
+      ...(email && { email: String(email).trim() }),
       ...(visitFrequency && { visitFrequency }),
       ...(servicePreferences && { servicePreferences }),
-      ...(contactPreferences && { contactPreferences }),
-
-      ...(Object.prototype.hasOwnProperty.call(req.body, 'requiresNamePinUpgrade') && {
-        requiresNamePinUpgrade: !!requiresNamePinUpgrade
-      }),
-      ...(Object.prototype.hasOwnProperty.call(req.body, 'nameVerifiedAt') && {
-        nameVerifiedAt: nameVerifiedAt ? new Date(nameVerifiedAt) : null
-      }),
-
-      pinHash: await bcrypt.hash(effectivePin, 10),
+      contactPreferences: {
+        method: 'sms',
+        optInPromotions: contactPreferences?.optInPromotions === true,
+        emailDisabled: contactPreferences?.emailDisabled === true,
+      },
+      requiresNamePinUpgrade: Object.prototype.hasOwnProperty.call(req.body || {}, 'requiresNamePinUpgrade')
+        ? !!requiresNamePinUpgrade
+        : adminCreated,
+      nameVerifiedAt: Object.prototype.hasOwnProperty.call(req.body || {}, 'nameVerifiedAt')
+        ? (nameVerifiedAt ? new Date(nameVerifiedAt) : null)
+        : (adminCreated ? null : new Date()),
+      pinHash: await bcrypt.hash(String(effectivePin), 10),
       pinSetAt: new Date(),
-      pinIsDefault: !hasCallerPin
+      pinIsDefault,
+      failedPinAttempts: 0,
     };
 
     const client = await new Client(newClient).save();
+    const safe = safeClient(client);
+    res.status(201).json(safe);
 
-    res.status(201).json(client);
-
-    // fire-and-forget SMS
     setImmediate(() => {
-      sendSMS(
-        'pin_changed',
-        {
-          clientId: {
-            _id: client._id,
-            firstName,
-            lastName,
-            phone,
-            contactPreferences: client.contactPreferences || {}
-          }
-        },
-        {
-          message: hasCallerPin
-            ? 'Welcome to Rakie Salon! Your PIN was set successfully.'
-            : 'A temporary PIN equal to the last 4 digits of your phone was set. Please change it ASAP.'
-        }
-      ).catch(err =>
-        console.error('[createClient] sendSMS error:', err?.message || err)
-      );
-    });
+      const clientPayload = {
+        _id: client._id,
+        firstName: client.firstName,
+        lastName: client.lastName,
+        phone: client.phone,
+        contactPreferences: client.contactPreferences || {},
+      };
 
-    return;
+      let messageOverride = 'Welcome to Rakie Salon! Your login PIN is ready. Keep it private.';
+      if (adminCreated && pinIsDefault) {
+        messageOverride = 'Welcome to Rakie Salon! Your starter PIN is the last 4 digits of your phone number. Use that PIN the next time you sign in.';
+      } else if (adminCreated && suppliedPin) {
+        messageOverride = 'Welcome to Rakie Salon! Your login PIN has been set by Rakie Salon. Keep it private.';
+      }
+
+      sendSMS('pin_changed', { clientId: clientPayload }, { messageOverride })
+        .catch(err => console.error('[createClient] sendSMS error:', err?.message || err));
+    });
   } catch (err) {
-    console.error('❌ Failed to create client:', err);
+    console.error('Failed to create client:', err);
+    if (err?.code === 11000) {
+      return res.status(409).json({ error: 'A client with that phone or email already exists' });
+    }
     return res.status(500).json({ error: 'Server error creating client' });
   }
 };
 
-
-// ─────────────────────────────────────────────────────────────
-// ADMIN PIN MANAGEMENT (under /api/admin/clients/:id/…)
-// ─────────────────────────────────────────────────────────────
-
-// POST /api/admin/clients/:id/pin/unlock
 exports.adminUnlockPin = async (req, res) => {
   try {
     const { id } = req.params;
     const updated = await Client.findByIdAndUpdate(
       id,
       {
-        $unset: {
-          pinLockedUntil: 1,
-          pinOtpHash: 1,
-          pinOtpExpires: 1,
-          pinOtpAttempts: 1,
-        },
+        $unset: { pinLockedUntil: 1 },
         $set: { failedPinAttempts: 0 },
       },
       { new: true }
@@ -495,7 +649,6 @@ exports.adminUnlockPin = async (req, res) => {
   }
 };
 
-// PATCH /api/admin/clients/:id/pin/reset   body: { newPin: "1234" }
 exports.adminResetPin = async (req, res) => {
   try {
     const { id } = req.params;
@@ -503,26 +656,20 @@ exports.adminResetPin = async (req, res) => {
     if (!/^\d{4}$/.test(String(newPin || ''))) {
       return res.status(400).json({ error: 'newPin must be a 4-digit string' });
     }
-    const pinHash = await bcrypt.hash(String(newPin), 10);
-    const updated = await Client.findByIdAndUpdate(
-      id,
-      {
-        $set: {
-          pinHash,
-          pinSetAt: new Date(),
-          failedPinAttempts: 0,
-        },
-        $unset: {
-          pinLockedUntil: 1,
-          pinOtpHash: 1,
-          pinOtpExpires: 1,
-          pinOtpAttempts: 1,
-        },
-      },
-      { new: true }
-    ).lean();
+    const updated = await Client.findById(id).exec();
     if (!updated) return res.status(404).json({ error: 'Client not found' });
-    res.status(204).end(); // respond first
+    if (String(newPin) === last4(updated.phone)) {
+      return res.status(400).json({ error: "PIN cannot be the phone number's last 4 digits" });
+    }
+
+    updated.pinHash = await bcrypt.hash(String(newPin), 10);
+    updated.pinSetAt = new Date();
+    updated.pinIsDefault = false;
+    updated.failedPinAttempts = 0;
+    updated.pinLockedUntil = undefined;
+    await updated.save();
+
+    res.status(204).end();
 
     setImmediate(() => {
       sendSMS('pin_changed', {
@@ -531,59 +678,52 @@ exports.adminResetPin = async (req, res) => {
           firstName: updated.firstName,
           lastName: updated.lastName,
           phone: updated.phone,
-          contactPreferences: updated.contactPreferences || {}
+          contactPreferences: updated.contactPreferences || {},
         }
       }, {
-        message: 'An admin updated your PIN. Please change it ASAP using the link below.'
-      }).catch(err => console.error('[adminResetPin] sendSMS error:', err?.code || '', err?.message || err));
+        message: 'An admin updated your PIN. Please keep it private.'
+      }).catch(err => console.error('[adminResetPin] sendSMS error:', err?.message || err));
     });
-    return;
   } catch (err) {
     console.error('adminResetPin error:', err);
     return res.status(500).json({ error: 'Failed to reset PIN' });
   }
 };
 
-// POST /api/admin/clients/:id/pin/send-reset-otp
 exports.adminSendResetOtp = async (req, res) => {
   try {
     const { id } = req.params;
-    const doc = await Client.findById(id).select('phone');
+    const doc = await Client.findById(id).select('firstName lastName phone contactPreferences').lean();
     if (!doc) return res.status(404).json({ error: 'Client not found' });
-    const phone10 = normalizePhone(doc.phone);
-    if (!/^\d{10}$/.test(phone10)) return res.status(400).json({ error: 'Invalid client phone' });
+    const phone = normalizePhone(doc.phone);
+    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'Invalid client phone' });
 
-    const code = String(Math.floor(100000 + Math.random() * 900000)); // 6-digit
-    const hash = await bcrypt.hash(code, 10);
-    await Client.findByIdAndUpdate(id, {
-      $set: {
-        pinOtpHash: hash,
-        pinOtpExpires: new Date(Date.now() + 10 * 60 * 1000),
-        pinOtpAttempts: 0,
-      },
-    });
-    await sendOtpSMS({ phone: phone10, code, ttlMins: 10, meta: { reason: 'admin_reset' } });
+    if (!canRequestOtp(phone, 'reset')) {
+      return res.status(429).json({ error: 'Too many code requests for this client right now.' });
+    }
+
+    const result = await issueOtpAndSend({ phone, purpose: 'reset', client: { ...doc, phone } });
+    if (!result.ok) {
+      console.error('adminSendResetOtp failed:', result.err?.message || result.err);
+      return res.status(502).json({ error: 'Failed to send reset code' });
+    }
+
     return res.status(204).end();
   } catch (err) {
     console.error('adminSendResetOtp error:', err);
-    return res.status(500).json({ error: 'Failed to send reset OTP' });
+    return res.status(500).json({ error: 'Failed to send reset code' });
   }
 };
 
-// Delete client
 exports.deleteClient = async (req, res) => {
   try {
     const { id } = req.params;
-
     const deletedClient = await Client.findByIdAndDelete(id);
-
     if (!deletedClient) {
       return res.status(404).json({ error: 'Client not found' });
     }
-
-    res.status(200).json({ message: 'Client deleted' });
+    return res.status(200).json({ message: 'Client deleted' });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to delete client' });
+    return res.status(500).json({ error: 'Failed to delete client' });
   }
 };
-

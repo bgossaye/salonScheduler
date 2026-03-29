@@ -11,17 +11,28 @@ const giftCardRoutes = require('./routes/admin/giftcard');
 const path = require('path'); 
 const helmet = require("helmet");
 const { googleReviewsHandler } = require('./routes/google'); 
-cron.schedule('0 8 * * *', async () => {
+const REMINDER_CRON = '0 10 * * *';
+const REMINDER_TIMEZONE = 'America/New_York';
+cron.schedule(REMINDER_CRON, async () => {
+    const startedAt = new Date();
+    console.log(`[reminders] Daily reminder job started at ${startedAt.toLocaleString('en-US', { timeZone: REMINDER_TIMEZONE })} (${REMINDER_TIMEZONE})`);
     await sendDailyReminders();
-});
+}, { timezone: REMINDER_TIMEZONE });
+console.log(`[reminders] Daily reminder cron scheduled: ${REMINDER_CRON} (${REMINDER_TIMEZONE})`);
 const inbound = require('./routes/twilioInbound');
 
 async function sendDailyReminders() {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const yyyy = tomorrow.getFullYear();
-    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
-    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    const easternToday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: REMINDER_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    const tomorrowEastern = new Date(`${easternToday}T12:00:00`);
+    tomorrowEastern.setDate(tomorrowEastern.getDate() + 1);
+    const yyyy = tomorrowEastern.getFullYear();
+    const mm = String(tomorrowEastern.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrowEastern.getDate()).padStart(2, '0');
     const formattedDate = `${yyyy}-${mm}-${dd}`;
 
     const appointments = await Appointment

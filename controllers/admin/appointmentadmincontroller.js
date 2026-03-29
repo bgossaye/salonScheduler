@@ -1,6 +1,15 @@
 const Appointment = require('../../models/appointment');
 const sendSMS = require('../../utils/sendSMS');
 
+function onlyDigits(value = '') {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function phone10(value = '') {
+  const digits = onlyDigits(value);
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
 // GET /api/appointments/client/:id  (client dashboard: list this client's appts)
 exports.getAppointmentsForClient = async (req, res) => {
   try {
@@ -25,9 +34,16 @@ exports.getAppointments = async (req, res) => {
     if (date) query.date = date;
     if (status) query.status = status;
     if (client) {
+      const rawClientSearch = String(client || '').trim();
+      const clientDigits = onlyDigits(rawClientSearch);
       query.$or = [
-        { clientName: { $regex: client, $options: 'i' } },
-        { clientPhone: { $regex: client, $options: 'i' } }
+        { clientName: { $regex: rawClientSearch, $options: 'i' } },
+        ...(clientDigits
+          ? [
+              ...(clientDigits.length >= 10 ? [{ clientPhone: phone10(clientDigits) }] : []),
+              { clientPhone: { $regex: clientDigits } },
+            ]
+          : [{ clientPhone: { $regex: rawClientSearch, $options: 'i' } }]),
       ];
     }
 

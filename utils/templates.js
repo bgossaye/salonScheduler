@@ -1,11 +1,8 @@
-// utils/templates.js
 const fs = require('fs');
 const path = require('path');
 const NotificationTemplate = require('../models/notificationtemplate');
 const { toCanonical } = require('../utils/canon');
 
-
-// Parse JSON-with-comments (JSONC): supports //, /* */, and trailing commas
 function parseJSONC(raw) {
   let s = raw.replace(/^\uFEFF/, '');
   s = s.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -31,12 +28,10 @@ async function getTemplate(type) {
     };
   }
 
-  // 2) File fallback
   const fb = loadFileFallback();
-  const t = (fb.templates || []).find(x => {
+  const t = (fb.templates || []).find((x) => {
     const raw = (x.type || x.templateType || '').toLowerCase();
-    const normalized = ALIAS[raw] || raw;
-    return normalized === key && (x.enabled !== false);
+    return toCanonical(raw) === key;
   });
 
   if (t) {

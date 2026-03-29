@@ -33,8 +33,8 @@ function parseKeyword(text) {
 }
 
 async function setOptIn(phoneE164, value) {
-  // Flip every known spot to be safe with legacy docs
-  const doc = await Client.findOne({ phone: phoneE164 }).exec();
+  const digits = String(phoneE164 || '').replace(/\D/g, '').slice(-10);
+  const doc = await Client.findOne({ phone: digits }).exec();
   if (!doc) return { updated: false, reason: 'not_found' };
 
   if (!doc.contactPreferences) doc.contactPreferences = {};
@@ -43,9 +43,8 @@ async function setOptIn(phoneE164, value) {
   doc.optInPromotions = !!value;
   doc.contactPreferences.optInPromotions = !!value;
   doc.marketing.optInPromotions = !!value;
-
-  // Optional: also set a hard “do not text” switch if you keep one
-  if (value === false) doc.smsDisabled = true; // (leave as-is if you don’t want this)
+  doc.smsDisabled = value === false;
+  if (value === true) doc.smsDisabled = false;
 
   await doc.save({ validateBeforeSave: false });
   return { updated: true, clientId: String(doc._id) };

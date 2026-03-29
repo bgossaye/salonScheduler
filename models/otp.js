@@ -2,18 +2,22 @@ const mongoose = require('mongoose');
 
 const OtpSchema = new mongoose.Schema(
   {
-    phone: { type: String, required: true, index: true }, // store digits-only
-    purpose: { type: String, enum: ['pin_set', 'login', 'verify'], default: 'pin_set' },
+    phone: { type: String, required: true, index: true }, // digits-only 10-digit US phone
+    purpose: {
+      type: String,
+      enum: ['signup', 'reset', 'login', 'verify', 'pin_set'],
+      default: 'reset',
+      index: true,
+    },
     codeHash: { type: String, required: true },
     attempts: { type: Number, default: 0 },
+    verifiedAt: { type: Date, default: null },
     expiresAt: { type: Date, required: true }, // TTL field
   },
   { timestamps: true }
 );
 
-// expire automatically at expiresAt
 OtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-// one active code per phone/purpose
 OtpSchema.index({ phone: 1, purpose: 1 }, { unique: true });
 
-module.exports = mongoose.model('Otp', OtpSchema);
+module.exports = mongoose.models.Otp || mongoose.model('Otp', OtpSchema);

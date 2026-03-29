@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt'); // ✅ switch from 'bcryptjs'
+const bcrypt = require('bcrypt');
 const Admin = require('../../models/admin');
 
 exports.login = async (req, res) => {
@@ -23,15 +23,14 @@ exports.login = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: admin._id },
+      { id: admin._id, role: 'admin', email: admin.email },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
 
     res.json({ token });
-
   } catch (err) {
-    console.error("🔥 Login error:", err);
+    console.error('🔥 Login error:', err);
     res.status(500).json({ error: 'Login failed' });
   }
 };
@@ -44,7 +43,7 @@ exports.register = async (req, res) => {
     await admin.save();
     res.status(201).json({ message: 'Admin created' });
   } catch (err) {
-    console.error("🔥 Registration error:", err);
+    console.error('🔥 Registration error:', err);
     res.status(400).json({ error: 'Registration failed' });
   }
 };
