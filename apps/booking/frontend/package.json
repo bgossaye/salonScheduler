@@ -1,0 +1,37 @@
+{
+  "name": "booking-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "homepage": "/booking",
+  "scripts": { "start": "craco start", "build": "craco build", "test": "craco test" },
+  "dependencies": {
+    "@fullcalendar/daygrid": "^6.1.19",
+    "@fullcalendar/interaction": "^6.1.19",
+    "@fullcalendar/react": "^6.1.19",
+    "@rakie/web-utils": "0.1.0",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^0.544.0",
+    "papaparse": "^5.5.3",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.9.1",
+    "react-scripts": "5.0.1",
+    "react-toastify": "^11.0.5"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@craco/craco": "^7.1.0"
+  }
+}

@@ -1,0 +1,27 @@
+# Cache static assets aggressively
+<FilesMatch "\.(js|css|ico|png|jpg|jpeg|svg|woff2?)$">
+  <IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresDefault "access plus 1 year"
+  </IfModule>
+  <IfModule mod_headers.c>
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </IfModule>
+</FilesMatch>
+
+# Don’t cache HTML
+<FilesMatch "\.(html)$">
+  <IfModule mod_headers.c>
+    Header set Cache-Control "no-store"
+  </IfModule>
+</FilesMatch>
+
+# SPA fallback for apps deployed under /booking
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /booking
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+  RewriteRule . /booking/index.html [L]
+</IfModule>
