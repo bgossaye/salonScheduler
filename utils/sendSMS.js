@@ -47,6 +47,44 @@ function ensureBookingLink(msg) {
   return `${text} ${BOOKING_URL}`.trim();
 }
 
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripClientNameFromSMS(msg, clientData) {
+  let text = String(msg || '').trim();
+  if (!text) return text;
+
+  text = text
+    .replace(/\{\{?\s*clientName\s*\}?\}/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  const first = String(clientData?.firstName || '').trim();
+  const last = String(clientData?.lastName || '').trim();
+  const full = [first, last].filter(Boolean).join(' ').trim();
+  const candidates = [full, first, last].filter(Boolean);
+
+  for (const value of candidates) {
+    const escaped = escapeRegExp(value);
+    text = text
+      .replace(new RegExp(`^(Hi|Hello|Dear)\\s+${escaped}(?=\\s*[,!:\\-–—]|\\s|$)`, 'i'), '$1')
+      .replace(new RegExp(`^${escaped}(?=\\s*[,!:\\-–—]|\\s)`, 'i'), '');
+  }
+
+  text = text
+    .replace(/^Dear\b/i, 'Hi')
+    .replace(/^(Hi|Hello)\s*[,!:\-–—]*\s*/i, '$1, ')
+    .replace(/^([A-Za-z])\s+,\s+/,'$1, ')
+    .replace(/^,\s*/, '')
+    .replace(/\s+([,!.?:;])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return text;
+}
+
 async function hydrateAppt(appt) {
   const hasDate = Boolean(appt?.date || appt?.start || appt?.startISO || appt?.startAt || appt?.startsAt);
   const hasTime = Boolean(
@@ -202,6 +240,7 @@ module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
     let body = (typeof extra?.messageOverride === 'string' && extra.messageOverride.trim())
       ? extra.messageOverride.trim()
       : populate(tpl.sms || '', tokens);
+    body = stripClientNameFromSMS(body, clientData);
     if (!AUTH_TYPES.has(t)) body = ensureBookingLink(body);
     if (!body?.trim()) {
       await alertOps?.('Template populated empty body', { where: 'sendSMS', type: t, apptId: appt?._id || null });
