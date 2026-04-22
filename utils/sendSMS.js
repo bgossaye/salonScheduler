@@ -7,41 +7,34 @@ const NotificationSetting = require('../models/notificationsetting');
 const { isMarketing } = require('../utils/canon');
 const Appointment = require('../models/appointment');
 
+function formatDate(value) {
+  if (!value) return '';
+  const str = String(value).trim();
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return str;
+  const [, yyyy, mm, dd] = m;
+  return `${mm}/${dd}/${yyyy.slice(-2)}`;
+}
+
+function formatTime(value) {
+  if (!value) return '';
+  const str = String(value).trim();
+  const parts = str.split(':');
+  if (parts.length < 2) return str;
+  let hours = Number(parts[0]);
+  const minutes = parts[1];
+  if (Number.isNaN(hours) || !/^\d{2}$/.test(minutes)) return str;
+  const suffix = hours >= 12 ? 'pm' : 'am';
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes}${suffix}`;
+}
+
 let Client = null;
 try { Client = require('../models/clients'); } catch {}
 if (!Client) { try { Client = require('../models/client'); } catch {} }
 
 const BOOKING_URL = 'https://rakiesalon.com/booking/';
 const AUTH_TYPES = new Set(['pin_otp', 'pin_verified', 'pin_changed']);
-const TZ = process.env.TZ || 'America/New_York';
-
-function pickFirst(...vals) {
-  for (const v of vals) if (v != null && v !== '') return v;
-  return undefined;
-}
-
-function deriveDateFromAny(obj) {
-  const cand = pickFirst(
-    obj?.startTime, obj?.start, obj?.startAt, obj?.dateTime, obj?.datetime,
-    obj?.start_date, obj?.startTimestamp, obj?.when, obj?.ts,
-    obj?.appt?.startTime, obj?.appt?.start, obj?.appointment?.startTime
-  );
-  if (!cand) return null;
-  const d = cand instanceof Date ? cand : new Date(cand);
-  return Number.isNaN(d?.valueOf?.()) ? null : d;
-}
-
-function to12Hour(time24) {
-  if (!time24) return time24;
-  const m = String(time24).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-  if (!m) return time24;
-  let hour = parseInt(m[1], 10);
-  const minute = m[2];
-  const ampm = hour >= 12 ? 'PM' : 'AM';
-  hour = hour % 12;
-  if (hour === 0) hour = 12;
-  return `${hour}:${minute} ${ampm}`;
-}
 
 function populate(str, data) {
   return String(str || '').replace(/\{\{?(\w+)\}?\}/g, (_, k) => (data[k] ?? ''));
@@ -103,32 +96,12 @@ async function ensureClientLoaded(appt) {
 }
 
 function buildTokens(appt, clientData, extra = {}) {
-  const derivedDate = deriveDateFromAny({ ...appt, ...extra });
-
-  let date = extra.date ?? appt?.date ?? appt?.dateStr ?? appt?.slot?.date ?? '';
-  let time = extra.time ?? appt?.time ?? appt?.timeStr ?? appt?.slot?.time ?? '';
-
-  if (derivedDate) {
-    date = new Intl.DateTimeFormat('en-US', {
-      timeZone: TZ,
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }).format(derivedDate);
-
-    time = new Intl.DateTimeFormat('en-US', {
-      timeZone: TZ,
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    }).format(derivedDate).replace(' ', '');
-  } else {
-    time = to12Hour(time);
-  }
+  const rawDate = extra.date ?? appt?.date ?? appt?.dateStr ?? appt?.slot?.date ?? '';
+  const rawTime = extra.time ?? appt?.time ?? appt?.timeStr ?? appt?.slot?.time ?? '';
 
   return {
-    date,
-    time,
+    date: formatDate(rawDate) || rawDate,
+    time: formatTime(rawTime) || rawTime,
     clientName: ` ${clientData?.firstName ?? ''}`.trim(),
     service: appt?.serviceId?.name || appt?.service || '',
     message: extra?.message || '',
@@ -136,6 +109,7 @@ function buildTokens(appt, clientData, extra = {}) {
     ttlMins: extra?.ttlMins ?? '',
   };
 }
+
 
 module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
   let t = null;
