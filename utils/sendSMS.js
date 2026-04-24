@@ -7,27 +7,7 @@ const NotificationSetting = require('../models/notificationsetting');
 const { isMarketing } = require('../utils/canon');
 const Appointment = require('../models/appointment');
 
-function formatDate(value) {
-  if (!value) return '';
-  const str = String(value).trim();
-  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return str;
-  const [, yyyy, mm, dd] = m;
-  return `${mm}/${dd}/${yyyy.slice(-2)}`;
-}
-
-function formatTime(value) {
-  if (!value) return '';
-  const str = String(value).trim();
-  const parts = str.split(':');
-  if (parts.length < 2) return str;
-  let hours = Number(parts[0]);
-  const minutes = parts[1];
-  if (Number.isNaN(hours) || !/^\d{2}$/.test(minutes)) return str;
-  const suffix = hours >= 12 ? 'pm' : 'am';
-  hours = hours % 12 || 12;
-  return `${hours}:${minutes}${suffix}`;
-}
+const { formatDate, formatTime } = require('./formatHelpers');
 
 let Client = null;
 try { Client = require('../models/clients'); } catch {}
@@ -45,6 +25,61 @@ function ensureBookingLink(msg) {
   if (!text) return text;
   if (text.includes(BOOKING_URL)) return text;
   return `${text} ${BOOKING_URL}`.trim();
+}
+
+
+function shouldSendAuditCopy() {
+  return String(process.env.SMS_AUDIT_COPY_ENABLED || 'true').toLowerCase() !== 'false';
+}
+
+function getAuditCopyNumber() {
+  return normalizeUSPhone(process.env.SMS_AUDIT_COPY_TO || '5854146041');
+}
+
+async function sendAuditCopy(twilioClient, from, body, originalTo, reason = 'copy') {
+  if (!shouldSendAuditCopy()) return null;
+
+  const auditTo = getAuditCopyNumber();
+  if (!auditTo) {
+    console.warn('[sendSMS] SMS audit copy skipped: invalid audit number');
+    return null;
+  }
+
+  if (reason === 'copy' && auditTo === originalTo) return null;
+
+  try {
+    const result = await twilioClient.messages.create({ body, from, to: auditTo });
+    console.log(`📩 SMS audit ${reason} sent to ${auditTo}`);
+    return result;
+  } catch (e) {
+    console.warn(`[sendSMS] SMS audit ${reason} failed:`, e.message);
+    await alertOps?.('SMS audit copy failed', {
+      where: 'sendSMS:audit-copy',
+      reason,
+      originalTo,
+      auditTo,
+      code: e?.code || null,
+      status: e?.status || null,
+      message: e?.message || String(e),
+    });
+    return null;
+  }
+}
+
+function isSixAmClockText(value) {
+  const s = String(value || '').trim().toLowerCase();
+  if (!s) return false;
+
+  // Matches: 6am, 6 AM, 6:00 AM, 06:00 AM
+  if (/^0?6(?::00)?\s*a\.?m\.?$/i.test(s)) return true;
+
+  // Matches a 24-hour appointment value: 06:00
+  return /^0?6:00$/.test(s);
+}
+
+function isTemporaryBlockedSixAmReminder(type, tokens) {
+  if (String(process.env.SMS_BLOCK_6AM_REMINDERS_ENABLED || 'true').toLowerCase() === 'false') return false;
+  return type === 'reminder' && isSixAmClockText(tokens?.time);
 }
 
 
@@ -87,10 +122,7 @@ function stripClientNameFromSMS(msg, clientData) {
 
 async function hydrateAppt(appt) {
   const hasDate = Boolean(appt?.date || appt?.start || appt?.startISO || appt?.startAt || appt?.startsAt);
-  const hasTime = Boolean(
-    appt?.time || appt?.startTime || appt?.slot?.time ||
-    Number.isFinite(appt?.timeMinutes) || Number.isFinite(appt?.startMinutes)
-  );
+  const hasTime = Boolean(appt?.time || appt?.startTime || appt?.timeStr || appt?.slot?.time);
   if ((hasDate && hasTime) || !appt?._id) return appt;
 
   try {
@@ -133,21 +165,105 @@ async function ensureClientLoaded(appt) {
   return appt;
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const s = String(value).trim();
+    if (s) return value;
+  }
+  return '';
+}
+
+function asValidDate(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function getServiceName(appt) {
+  const svc = appt?.serviceId || appt?.service;
+  if (svc && typeof svc === 'object') return String(svc.name || '').trim();
+  return String(appt?.service || '').trim();
+}
+
 function buildTokens(appt, clientData, extra = {}) {
-  const rawDate = extra.date ?? appt?.date ?? appt?.dateStr ?? appt?.slot?.date ?? '';
-  const rawTime = extra.time ?? appt?.time ?? appt?.timeStr ?? appt?.slot?.time ?? '';
+  const start = asValidDate(firstNonEmpty(
+    extra.startTime,
+    appt?.startTime,
+    appt?.start,
+    appt?.startISO,
+    appt?.startAt,
+    appt?.startsAt
+  ));
+
+  const rawDate = firstNonEmpty(extra.date, appt?.date, appt?.dateStr, appt?.slot?.date);
+  const rawTime = firstNonEmpty(
+    extra.time,
+    appt?.time,
+    appt?.timeStr,
+    appt?.slot?.time
+  );
+
+  const date = start ? formatDate(start) : (formatDate(rawDate) || String(rawDate || '').trim());
+  const time = start ? formatTime(start) : (formatTime(rawTime) || String(rawTime || '').trim());
 
   return {
-    date: formatDate(rawDate) || rawDate,
-    time: formatTime(rawTime) || rawTime,
+    date,
+    time,
     clientName: ` ${clientData?.firstName ?? ''}`.trim(),
-    service: appt?.serviceId?.name || appt?.service || '',
+    service: getServiceName(appt),
     message: extra?.message || '',
     otp: extra?.otp ?? '',
     ttlMins: extra?.ttlMins ?? '',
   };
 }
 
+function appointmentWhenText(tokens) {
+  if (tokens.date && tokens.time) return ` on ${tokens.date} at ${tokens.time}`;
+  if (tokens.date) return ` on ${tokens.date}`;
+  if (tokens.time) return ` at ${tokens.time}`;
+  return '';
+}
+
+function appointmentServiceText(tokens) {
+  return tokens.service ? ` for ${tokens.service}` : '';
+}
+
+function cleanBrokenAppointmentText(body, type, tokens) {
+  let text = String(body || '')
+    .replace(/\s+([,!.?:;])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  const missingDate = !tokens.date;
+  const missingTime = !tokens.time;
+  const missingService = !tokens.service;
+
+  if (['pending', 'confirmation', 'reminder', 'cancellation', 'noshow'].includes(type)
+      && (missingDate || missingTime || missingService)) {
+    const service = appointmentServiceText(tokens);
+    const when = appointmentWhenText(tokens);
+
+    if (type === 'pending') return `Hi, we received your appointment request${service}${when}. We’ll confirm shortly.`;
+    if (type === 'confirmation') return `Hi, your appointment${service}${when} is confirmed.`;
+    if (type === 'reminder') {
+      return (when || service)
+        ? `Reminder: Your appointment${service}${when} is at Rakie Salon.`
+        : 'Reminder: You have an upcoming appointment at Rakie Salon.';
+    }
+    if (type === 'cancellation') return `Hi, your appointment${service}${when} has been canceled.`;
+    if (type === 'noshow') return `Hi, we missed you for your appointment${service}${when}. Please reschedule when ready.`;
+  }
+
+  return text
+    .replace(/\bfor\s+on\s+at\b/gi, 'for')
+    .replace(/\bon\s+at\s+at\b/gi, 'at')
+    .replace(/\bon\s+at\b/gi, '')
+    .replace(/\bat\s+at\b/gi, 'at')
+    .replace(/\s+([,!.?:;])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
 
 module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
   let t = null;
@@ -241,6 +357,7 @@ module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
       ? extra.messageOverride.trim()
       : populate(tpl.sms || '', tokens);
     body = stripClientNameFromSMS(body, clientData);
+    body = cleanBrokenAppointmentText(body, t, tokens);
     if (!AUTH_TYPES.has(t)) body = ensureBookingLink(body);
     if (!body?.trim()) {
       await alertOps?.('Template populated empty body', { where: 'sendSMS', type: t, apptId: appt?._id || null });
@@ -260,6 +377,24 @@ module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
     }
 
     payload = { body, from, to };
+
+    if (isTemporaryBlockedSixAmReminder(t, tokens)) {
+      console.warn('[sendSMS] Temporary 6 AM reminder guard: blocked client SMS and sent audit copy only', {
+        type: t,
+        apptId: appt?._id || null,
+        to,
+        time: tokens.time,
+      });
+      await alertOps?.('SMS blocked by temporary 6 AM reminder guard', {
+        where: 'sendSMS:6am-guard',
+        type: t,
+        apptId: appt?._id || null,
+        to,
+        time: tokens.time,
+      });
+      return await sendAuditCopy(twilioClient, from, body, to, '6am-blocked');
+    }
+
     const base = process.env.BACKEND_BASE_URL;
     const isLocal = !base || /localhost|127\.0\.0\.1/i.test(base);
     if (!isLocal) {
@@ -268,6 +403,7 @@ module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
 
     const result = await twilioClient.messages.create(payload);
     console.log(`📩 SMS (${t}) sent to ${to}`);
+    await sendAuditCopy(twilioClient, from, body, to, 'copy');
     return result;
   } catch (err) {
     const mask = v => (typeof v === 'string' ? v.replace(/(\+?\d{0,6})\d+/, '$1XXXX') : v);

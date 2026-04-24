@@ -1,7 +1,23 @@
-// backend/utils/formatHelpers.js
-
 function formatDate(input) {
-  const d = input instanceof Date ? input : new Date(input);
+  if (!input) return '';
+
+  if (input instanceof Date) {
+    if (isNaN(input)) return '';
+    return input.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  const s = String(input).trim();
+
+  // Date-only appointment values must stay as the selected calendar day.
+  // new Date('YYYY-MM-DD') is parsed as UTC and can shift to the previous day.
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymd) {
+    const [, y, m, d] = ymd;
+    const localDate = new Date(Number(y), Number(m) - 1, Number(d));
+    return localDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  const d = new Date(s);
   if (isNaN(d)) return '';
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
@@ -10,15 +26,6 @@ function formatTime(input) {
   // If given a Date, format directly
   if (input instanceof Date && !isNaN(input)) {
     return input.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  }
-
-  // Minutes since midnight (e.g. 810 → 1:30 PM)
-  if (typeof input === 'number' && Number.isFinite(input)) {
-    const d = new Date();
-    const hh = Math.floor(input / 60);
-    const mm = input % 60;
-    d.setHours(hh, mm, 0, 0);
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   }
 
   if (typeof input !== 'string') return '';
