@@ -15,6 +15,7 @@ if (!Client) { try { Client = require('../models/client'); } catch {} }
 
 const BOOKING_URL = 'https://rakiesalon.com/booking/';
 const AUTH_TYPES = new Set(['pin_otp', 'pin_verified', 'pin_changed']);
+const APPOINTMENT_SMS_TYPES = new Set(['pending', 'confirmation', 'reminder', 'cancellation', 'noshow']);
 
 function populate(str, data) {
   return String(str || '').replace(/\{\{?(\w+)\}?\}/g, (_, k) => (data[k] ?? ''));
@@ -174,6 +175,112 @@ function firstNonEmpty(...values) {
   return '';
 }
 
+function firstNonEmptyEntry(entries) {
+  for (const entry of entries) {
+    const value = entry?.value;
+    if (value === null || value === undefined) continue;
+    const s = String(value).trim();
+    if (s) return entry;
+  }
+  return { source: null, value: '' };
+}
+
+function summarizeForLog(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString();
+  if (typeof value === 'object') {
+    if (value._id) return `{object _id=${String(value._id)}}`;
+    return `{object keys=${Object.keys(value).slice(0, 8).join(',')}}`;
+  }
+  const s = String(value).trim();
+  return s.length > 120 ? `${s.slice(0, 117)}...` : s;
+}
+
+function maskPhoneForLog(value) {
+  const s = String(value || '');
+  return s ? s.replace(/(\+?\d{0,6})\d+/, '$1XXXX') : '';
+}
+
+function getTokenDiagnostics(appt, extra = {}, tokens = {}) {
+  const startEntry = firstNonEmptyEntry([
+    { source: 'extra.startTime', value: extra.startTime },
+    { source: 'appt.startTime', value: appt?.startTime },
+    { source: 'appt.start', value: appt?.start },
+    { source: 'appt.startISO', value: appt?.startISO },
+    { source: 'appt.startAt', value: appt?.startAt },
+    { source: 'appt.startsAt', value: appt?.startsAt },
+  ]);
+  const rawStartDate = asValidDate(startEntry.value);
+  const startValid = Boolean(rawStartDate);
+
+  const dateEntry = firstNonEmptyEntry([
+    { source: 'extra.date', value: extra.date },
+    { source: 'appt.date', value: appt?.date },
+    { source: 'appt.dateStr', value: appt?.dateStr },
+    { source: 'appt.slot.date', value: appt?.slot?.date },
+  ]);
+
+  const timeEntry = firstNonEmptyEntry([
+    { source: 'extra.time', value: extra.time },
+    { source: 'appt.time', value: appt?.time },
+    { source: 'appt.timeStr', value: appt?.timeStr },
+    { source: 'appt.slot.time', value: appt?.slot?.time },
+  ]);
+
+  const formattedDateFromRaw = dateEntry.value ? formatDate(dateEntry.value) : '';
+  const formattedTimeFromRaw = timeEntry.value ? formatTime(timeEntry.value) : '';
+
+  const issues = [];
+  if (startEntry.value && !startValid) issues.push('invalid_start_datetime');
+  if (!tokens.date) issues.push('missing_date_token');
+  if (!tokens.time) issues.push('missing_time_token');
+  if (dateEntry.value && !formattedDateFromRaw && !startValid) issues.push('invalid_date_format');
+  if (timeEntry.value && !formattedTimeFromRaw && !startValid) issues.push('invalid_time_format');
+
+  return {
+    hasIssues: issues.length > 0,
+    issues,
+    appointment: {
+      id: String(appt?._id || ''),
+      status: String(appt?.status || ''),
+      service: summarizeForLog(getServiceName(appt)),
+      duration: summarizeForLog(appt?.duration),
+    },
+    client: {
+      id: String((appt?.clientId && typeof appt.clientId === 'object' ? appt.clientId._id : appt?.clientId) || ''),
+      phone: maskPhoneForLog(appt?.clientId && typeof appt.clientId === 'object' ? appt.clientId.phone : ''),
+    },
+    sources: {
+      start: { source: startEntry.source, raw: summarizeForLog(startEntry.value), valid: startValid },
+      date: { source: dateEntry.source, raw: summarizeForLog(dateEntry.value), formatted: formattedDateFromRaw },
+      time: { source: timeEntry.source, raw: summarizeForLog(timeEntry.value), formatted: formattedTimeFromRaw },
+    },
+    tokens: {
+      date: tokens.date || '',
+      time: tokens.time || '',
+      service: tokens.service || '',
+    },
+  };
+}
+
+async function logAppointmentDateTimeIssues(type, appt, extra, tokens, templateSource) {
+  if (!APPOINTMENT_SMS_TYPES.has(type)) return null;
+
+  const diagnostics = getTokenDiagnostics(appt, extra, tokens);
+  if (!diagnostics.hasIssues) return null;
+
+  const details = {
+    where: 'sendSMS:appointment-datetime-validation',
+    type,
+    templateSource: templateSource || null,
+    ...diagnostics,
+  };
+
+  console.warn('[sendSMS] Appointment SMS date/time validation issue', details);
+  await alertOps?.('Appointment SMS date/time validation issue', details);
+  return details;
+}
+
 function asValidDate(value) {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);
@@ -239,7 +346,7 @@ function cleanBrokenAppointmentText(body, type, tokens) {
   const missingTime = !tokens.time;
   const missingService = !tokens.service;
 
-  if (['pending', 'confirmation', 'reminder', 'cancellation', 'noshow'].includes(type)
+  if (APPOINTMENT_SMS_TYPES.has(type)
       && (missingDate || missingTime || missingService)) {
     const service = appointmentServiceText(tokens);
     const when = appointmentWhenText(tokens);
@@ -353,6 +460,8 @@ module.exports = async function sendSMS(typeOrStatus, apptLike, extra = {}) {
     }
 
     const tokens = buildTokens(appt, clientData, extra);
+    await logAppointmentDateTimeIssues(t, appt, extra, tokens, tpl?.source);
+
     let body = (typeof extra?.messageOverride === 'string' && extra.messageOverride.trim())
       ? extra.messageOverride.trim()
       : populate(tpl.sms || '', tokens);
