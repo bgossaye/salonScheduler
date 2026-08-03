@@ -11,7 +11,8 @@ const { installSystemErrorCapture } = require('./utils/systemErrorLogger');
 installSystemErrorCapture();
 const { ensureRakebWorkerAndMigrate } = require('./utils/workerPricing');
 const giftCardRoutes = require('./routes/admin/giftcard');
-const path = require('path'); 
+const path = require('path');
+const fs = require('fs');
 const helmet = require("helmet");
 const { googleReviewsHandler } = require('./routes/google'); 
 const REMINDER_CRON = '0 10 * * *';
@@ -262,12 +263,42 @@ app.use('/api/admin/reminders', require('./routes/admin/reminders'));
 app.use('/api/admin/system-errors', adminSystemErrors);
 app.use('/api/sms', inbound);
 
-// Serve booking at /booking
- app.use('/booking', express.static(bookingBuild, { index: false }));
- app.use(express.static(siteBuild, { index: false }));
+// Serve bundled frontends only when their production builds exist.
+// On Render this service is API-only; the site and booking app are hosted on IONOS.
+const bookingIndex = path.join(bookingBuild, 'index.html');
+const siteIndex = path.join(siteBuild, 'index.html');
+const hasBookingBuild = fs.existsSync(bookingIndex);
+const hasSiteBuild = fs.existsSync(siteIndex);
 
-app.get('/booking/*', (_, res) => res.sendFile(path.join(bookingBuild, 'index.html')));
-app.get('*', (_, res) => res.sendFile(path.join(siteBuild, 'index.html')));
+if (hasBookingBuild) {
+  app.use('/booking', express.static(bookingBuild, { index: false }));
+  app.get('/booking/*', (_, res) => res.sendFile(bookingIndex));
+} else {
+  console.log(`[static] Booking build not found at ${bookingBuild}; running API-only for /booking.`);
+}
+
+if (hasSiteBuild) {
+  app.use(express.static(siteBuild, { index: false }));
+  app.get('*', (_, res) => res.sendFile(siteIndex));
+} else {
+  console.log(`[static] Site build not found at ${siteBuild}; running API-only.`);
+
+  app.get('/', (_, res) => {
+    res.status(200).json({
+      ok: true,
+      service: 'rakie-backend',
+      message: 'Rakie Salon API is running.'
+    });
+  });
+
+  app.use((req, res) => {
+    res.status(404).json({
+      ok: false,
+      message: 'API endpoint not found',
+      path: req.originalUrl
+    });
+  });
+}
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;
