@@ -3,12 +3,37 @@ const bcrypt = require('bcryptjs');
 
 const Client = require('../../models/client');
 const Appointment = require('../../models/appointment');
+const Worker = require('../../models/worker');
+const AdminNotification = require('../../models/adminnotification');
 const Otp = require('../../models/otp');
 const sendSMS = require('../../utils/sendSMS');
 const sendOtpSMS = require('../../utils/sendOtpSMS');
+const auth = require('../../middleware/authmiddleware');
 
-let opsAlert = async () => {};
-try { ({ opsAlert } = require('../../lib/opsAlert')); } catch {/* ignore */}
+const { alertOps: opsAlert } = require('../../utils/opsAlert');
+
+
+function can(req, permissionKey) {
+  if (isAdminRoute(req) && !req.admin?.id) return false;
+  if (!isAdminRoute(req)) return true;
+  return auth.hasPermission(req, permissionKey);
+}
+function assignmentAdminAllowed(req) {
+  const role = String(req.admin?.roleKey || req.admin?.role || '').toLowerCase();
+  return role === 'owner' || role === 'admin';
+}
+
+function myWorkerId(req) {
+  return req.admin?.workerId ? String(req.admin.workerId) : '';
+}
+function assignedClientQuery(req, base = {}) {
+  if (!isAdminRoute(req)) return base;
+  if (can(req, 'clientsViewAll')) return base;
+  if (can(req, 'clientsViewAssigned') && myWorkerId(req)) {
+    return { ...base, assignedStylistId: myWorkerId(req) };
+  }
+  return null;
+}
 
 function onlyDigits(s = '') { return String(s).replace(/\D/g, ''); }
 function phone10(p = '') {
@@ -34,6 +59,113 @@ function safeClient(doc) {
   delete o.pinOtpExpires;
   delete o.pinOtpAttempts;
   return o;
+}
+
+function duplicateClientResponse(res, existing, reason = 'duplicate') {
+  return res.status(409).json({
+    error: existing?.phone
+      ? 'A client with that phone number already exists.'
+      : 'A client with that phone or email already exists.',
+    code: 'CLIENT_ALREADY_EXISTS',
+    reason,
+    existingClient: existing ? safeClient(existing) : null,
+  });
+}
+
+
+function displayNameFromParts(obj = {}) {
+  return obj.displayName || [obj.firstName, obj.lastName].filter(Boolean).join(' ').trim() || obj.email || 'Staff';
+}
+
+function actorName(req) {
+  return req.admin?.workerName || req.admin?.name || req.admin?.email || 'Staff';
+}
+
+function clientFullName(client) {
+  return [client?.firstName, client?.lastName].filter(Boolean).join(' ').trim() || 'Client';
+}
+
+function idOf(value) {
+  return value?._id ? String(value._id) : (value ? String(value) : '');
+}
+
+async function publicClientAssignmentConflict(client, requestedWorkerId = '') {
+  const assignedId = idOf(client?.assignedStylistId);
+  const assignedWorkerFromClient = client?.assignedStylistId && typeof client.assignedStylistId === 'object'
+    ? client.assignedStylistId
+    : null;
+  const [assignedWorker, requestedWorker] = await Promise.all([
+    assignedWorkerFromClient || (assignedId ? Worker.findById(assignedId).select('displayName firstName lastName title').lean() : null),
+    requestedWorkerId ? Worker.findById(requestedWorkerId).select('displayName firstName lastName title').lean() : null,
+  ]);
+
+  return {
+    error: `${clientFullName(client)} is assigned to ${displayNameFromParts(assignedWorker)}. Continue as a one-time appointment; only owner/admin can change the client’s default stylist.`,
+    code: 'CLIENT_ASSIGNED_TO_OTHER_STYLIST',
+    client: {
+      _id: String(client._id),
+      firstName: client.firstName || '',
+      lastName: client.lastName || '',
+      phone: maskPhone(client.phone),
+      assignedStylistId: assignedId,
+      assignedStylistName: displayNameFromParts(assignedWorker),
+    },
+    requestedStylist: requestedWorker ? {
+      _id: String(requestedWorker._id),
+      name: displayNameFromParts(requestedWorker),
+    } : null,
+    switchRequestAllowed: false,
+  };
+}
+
+async function createClientSwitchNotification({ req, client, fromWorkerId, toWorkerId, note = '', kind = 'request' }) {
+  const [fromWorker, toWorker] = await Promise.all([
+    fromWorkerId ? Worker.findById(fromWorkerId).select('displayName firstName lastName title').lean() : null,
+    toWorkerId ? Worker.findById(toWorkerId).select('displayName firstName lastName title').lean() : null,
+  ]);
+
+  const clientName = clientFullName(client);
+  const fromName = displayNameFromParts(fromWorker);
+  const toName = displayNameFromParts(toWorker);
+  const actor = actorName(req);
+  const isRequest = kind === 'request';
+
+  return AdminNotification.create({
+    type: isRequest ? 'client_stylist_switch_request' : 'client_stylist_switched',
+    severity: isRequest ? 'warning' : 'info',
+    title: isRequest ? 'Stylist switch requested' : 'Client stylist switched',
+    message: isRequest
+      ? `${actor} requested admin approval to switch ${clientName} from ${fromName} to ${toName}.`
+      : `${clientName} was switched from ${fromName} to ${toName} by ${actor}.`,
+    actorAdminId: req.admin?.id || null,
+    actorName: actor,
+    actorEmail: req.admin?.email || '',
+    clientId: client?._id || null,
+    fromWorkerId: fromWorkerId || null,
+    toWorkerId: toWorkerId || null,
+    status: 'unread',
+    metadata: {
+      note: String(note || '').slice(0, 500),
+      clientName,
+      fromWorkerName: fromName,
+      toWorkerName: toName,
+      actor,
+    },
+  });
+}
+
+async function findExistingClientByPhoneOrEmail({ phone, email, excludeId = null }) {
+  const or = [];
+  const p10 = normalizePhone(phone);
+  const cleanEmail = String(email || '').trim().toLowerCase();
+
+  if (/^\d{10}$/.test(p10)) or.push({ phone: p10 });
+  if (cleanEmail) or.push({ email: cleanEmail });
+  if (!or.length) return null;
+
+  const query = { $or: or };
+  if (excludeId) query._id = { $ne: excludeId };
+  return Client.findOne(query).exec();
 }
 function isAdminRoute(req) {
   const url = String(req.originalUrl || req.baseUrl || '');
@@ -197,8 +329,22 @@ exports.getClients = async (req, res) => {
     if (phone) {
       const p10 = phone10(phone);
       if (!p10) return res.json(null);
-      const one = await Client.findOne({ phone: p10 }).lean();
-      return res.json(one || null);
+
+      // Full-view users (owner/admin/front desk/manager) can look up any client by phone.
+      if (can(req, 'clientsViewAll')) {
+        const one = await Client.findOne({ phone: p10 }).populate('assignedStylistId preferredStylistId lastStylistId').lean();
+        return res.json(one || null);
+      }
+
+      // During booking, stylists may look up an existing client even when another
+      // stylist owns the relationship. Booking rules keep the appointment moving
+      // and flag one-time/non-owner bookings; only owner/admin can change ownership.
+      if (can(req, 'clientsViewAssigned') && myWorkerId(req)) {
+        const one = await Client.findOne({ phone: p10 }).populate('assignedStylistId preferredStylistId lastStylistId').lean();
+        return res.json(one || null);
+      }
+
+      return res.status(403).json({ error: 'Forbidden', permission: 'clientsViewAll' });
     }
 
     const rawSearch = String(search || '').trim();
@@ -218,10 +364,74 @@ exports.getClients = async (req, res) => {
         }
       : {};
 
-    const clients = await Client.find(query);
+    const scopedQuery = assignedClientQuery(req, query);
+    if (!scopedQuery) return res.status(403).json({ error: 'Forbidden', permission: 'clientsViewAll' });
+
+    const clients = await Client.find(scopedQuery).populate('assignedStylistId preferredStylistId lastStylistId');
     return res.json(clients);
   } catch (err) {
     return res.status(500).json({ error: 'Server error' });
+  }
+};
+
+
+exports.requestStylistSwitch = async (req, res) => {
+  try {
+    const p10 = phone10(req.body?.phone || req.query?.phone || '');
+    const clientId = req.body?.clientId || req.query?.clientId || '';
+    const requestedWorkerId = String(req.body?.requestedWorkerId || req.query?.requestedWorkerId || myWorkerId(req) || '').trim();
+    const note = req.body?.note || '';
+
+    if (!requestedWorkerId) {
+      return res.status(400).json({ error: 'Requested stylist is required.', code: 'REQUESTED_WORKER_REQUIRED' });
+    }
+
+    const client = clientId
+      ? await Client.findById(clientId).lean()
+      : await Client.findOne({ phone: p10 }).lean();
+
+    if (!client) return res.status(404).json({ error: 'Client not found.', code: 'CLIENT_NOT_FOUND' });
+
+    const currentStylistId = client.assignedStylistId ? String(client.assignedStylistId) : '';
+    if (currentStylistId && currentStylistId === requestedWorkerId) {
+      return res.json({ success: true, message: 'This client is already assigned to the requested stylist.', alreadyAssigned: true });
+    }
+
+    if (!currentStylistId) {
+      return res.status(400).json({ error: 'This client is not assigned to another stylist. An admin/front desk can assign them directly.', code: 'CLIENT_UNASSIGNED' });
+    }
+
+    const existing = await AdminNotification.findOne({
+      type: 'client_stylist_switch_request',
+      clientId: client._id,
+      fromWorkerId: currentStylistId,
+      toWorkerId: requestedWorkerId,
+      status: 'unread',
+    }).sort({ createdAt: -1 });
+
+    if (existing) {
+      existing.actorAdminId = req.admin?.id || existing.actorAdminId;
+      existing.actorName = actorName(req);
+      existing.actorEmail = req.admin?.email || existing.actorEmail;
+      existing.message = `${actorName(req)} requested admin approval to switch ${clientFullName(client)} from ${existing.metadata?.fromWorkerName || 'current stylist'} to ${existing.metadata?.toWorkerName || 'requested stylist'}.`;
+      existing.metadata = { ...(existing.metadata || {}), note: String(note || existing.metadata?.note || '').slice(0, 500), requestedAgainAt: new Date().toISOString() };
+      await existing.save();
+      return res.json({ success: true, message: 'A stylist switch request is already pending. Admin dashboard was refreshed with the latest request.', notificationId: existing._id });
+    }
+
+    const notification = await createClientSwitchNotification({
+      req,
+      client,
+      fromWorkerId: currentStylistId,
+      toWorkerId: requestedWorkerId,
+      note,
+      kind: 'request',
+    });
+
+    return res.status(201).json({ success: true, message: 'Stylist switch request sent to admin dashboard.', notificationId: notification._id });
+  } catch (err) {
+    console.error('requestStylistSwitch failed:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to request stylist switch.' });
   }
 };
 
@@ -256,6 +466,31 @@ exports.updateClient = async (req, res) => {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, 'email')) {
+      body.email = String(body.email || '').trim().toLowerCase();
+      if (!body.email) delete body.email;
+    }
+
+    if (body.phone || body.email) {
+      const existing = await findExistingClientByPhoneOrEmail({
+        phone: body.phone,
+        email: body.email,
+        excludeId: req.params.id,
+      });
+      if (existing) return duplicateClientResponse(res, existing, 'update_duplicate');
+    }
+
+    const existingBeforeUpdate = await Client.findById(req.params.id).select('firstName lastName phone assignedStylistId').lean();
+    if (!existingBeforeUpdate) return res.status(404).json({ error: 'Client not found' });
+
+    const assignmentSubmitted = Object.prototype.hasOwnProperty.call(body, 'assignedStylistId');
+    if (assignmentSubmitted) {
+      if (!assignmentAdminAllowed(req)) {
+        return res.status(403).json({ error: 'Only owner/admin can change a client’s default stylist.', permission: 'clientsAssignStylist' });
+      }
+      body.assignedStylistId = body.assignedStylistId || null;
+    }
+
     let pinChanged = false;
     if (body.pin) {
       if (!/^\d{4}$/.test(String(body.pin))) {
@@ -281,6 +516,20 @@ exports.updateClient = async (req, res) => {
     const updated = await Client.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true });
     if (!updated) return res.status(404).json({ error: 'Client not found' });
 
+    const oldStylistId = existingBeforeUpdate.assignedStylistId ? String(existingBeforeUpdate.assignedStylistId) : '';
+    const newStylistId = updated.assignedStylistId ? String(updated.assignedStylistId) : '';
+    const stylistChanged = assignmentSubmitted && oldStylistId !== newStylistId;
+
+    if (stylistChanged) {
+      await createClientSwitchNotification({
+        req,
+        client: updated,
+        fromWorkerId: oldStylistId || null,
+        toWorkerId: newStylistId || null,
+        kind: 'switched',
+      }).catch((notifyErr) => console.error('[client-switch] notification failed:', notifyErr?.message || notifyErr));
+    }
+
     const safe = safeClient(updated);
     res.json(safe);
 
@@ -293,7 +542,11 @@ exports.updateClient = async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('updateClient failed:', err);
+    console.error('updateClient failed:', err?.message || err);
+    if (err?.code === 11000) {
+      const existing = await findExistingClientByPhoneOrEmail({ phone: req.body?.phone, email: req.body?.email, excludeId: req.params.id }).catch(() => null);
+      return duplicateClientResponse(res, existing, 'update_duplicate_key');
+    }
     return res.status(500).json({ error: 'Server error updating client' });
   }
 };
@@ -470,6 +723,12 @@ exports.getClientDetails = async (req, res) => {
       return res.status(404).json({ error: 'Client not found' });
     }
 
+    if (!can(req, 'clientsViewAll')) {
+      if (!can(req, 'clientsViewAssigned') || !myWorkerId(req) || String(client.assignedStylistId || '') !== myWorkerId(req)) {
+        return res.status(403).json({ error: 'Forbidden', permission: 'clientsViewAssigned' });
+      }
+    }
+
     const lastCompletedAppointment = await Appointment.findOne({
       clientId: req.params.id,
       status: 'completed',
@@ -529,6 +788,7 @@ exports.createClient = async (req, res) => {
       visitFrequency,
       servicePreferences,
       contactPreferences,
+      assignedStylistId,
       pin,
       requiresNamePinUpgrade,
       nameVerifiedAt,
@@ -539,6 +799,12 @@ exports.createClient = async (req, res) => {
     const phoneDigits = normalizePhone(phone);
     if (!firstName || !lastName || !/^\d{10}$/.test(phoneDigits)) {
       return res.status(400).json({ error: 'First name, last name, and a valid 10-digit phone are required' });
+    }
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const existingClient = await findExistingClientByPhoneOrEmail({ phone: phoneDigits, email: normalizedEmail });
+    if (existingClient) {
+      return duplicateClientResponse(res, existingClient, 'create_duplicate');
     }
 
     const adminCreated = isAdminRoute(req);
@@ -574,11 +840,16 @@ exports.createClient = async (req, res) => {
       pinIsDefault = false;
     }
 
+    let effectiveAssignedStylistId = null;
+    if (adminCreated && assignedStylistId && assignmentAdminAllowed(req)) {
+      effectiveAssignedStylistId = String(assignedStylistId);
+    }
+
     const newClient = {
       firstName: String(firstName).trim(),
       lastName: String(lastName).trim(),
       phone: phoneDigits,
-      ...(email && { email: String(email).trim() }),
+      ...(normalizedEmail && { email: normalizedEmail }),
       ...(visitFrequency && { visitFrequency }),
       ...(servicePreferences && { servicePreferences }),
       contactPreferences: {
@@ -596,6 +867,7 @@ exports.createClient = async (req, res) => {
       pinSetAt: new Date(),
       pinIsDefault,
       failedPinAttempts: 0,
+      ...(effectiveAssignedStylistId && { assignedStylistId: effectiveAssignedStylistId }),
     };
 
     const client = await new Client(newClient).save();
@@ -622,9 +894,10 @@ exports.createClient = async (req, res) => {
         .catch(err => console.error('[createClient] sendSMS error:', err?.message || err));
     });
   } catch (err) {
-    console.error('Failed to create client:', err);
+    console.error('Failed to create client:', err?.message || err);
     if (err?.code === 11000) {
-      return res.status(409).json({ error: 'A client with that phone or email already exists' });
+      const existing = await findExistingClientByPhoneOrEmail({ phone: req.body?.phone, email: req.body?.email }).catch(() => null);
+      return duplicateClientResponse(res, existing, 'create_duplicate_key');
     }
     return res.status(500).json({ error: 'Server error creating client' });
   }

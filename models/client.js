@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 
 const clientSchema = new mongoose.Schema({
   firstName: { type: String, required: true },
@@ -7,6 +7,16 @@ const clientSchema = new mongoose.Schema({
   email: { type: String, unique: true, sparse: true},
   dob: { type: Date },
   nickname: { type: String, default: '' }, // 🔒 Admin-only field
+
+  clientType: { type: String, enum: ['full', 'event_guest'], default: 'full', index: true },
+  isEventGuest: { type: Boolean, default: false, index: true },
+  eventGuestMeta: {
+    source: { type: String, default: '' },
+    eventLabel: { type: String, default: '' },
+    eventRole: { type: String, default: '' },
+    createdFromGroupBookingId: { type: String, default: '' },
+    convertedToFullClientAt: { type: Date, default: null },
+  },
 
   visitFrequency: { type: Number, default: 6 },
 
@@ -56,7 +66,23 @@ const clientSchema = new mongoose.Schema({
     giftCards: [String]
   },
 
+  welcomeOffer: {
+    code: { type: String, default: '' },
+    amount: { type: Number, default: 0 },
+    status: { type: String, enum: ['available', 'redeemed', 'expired', 'void'], default: 'available' },
+    source: { type: String, default: '' },
+    grantedAt: { type: Date, default: null },
+    redeemedAt: { type: Date, default: null },
+    appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', default: null },
+  },
+
   profilePhoto: String,
+
+  assignedStylistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
+  defaultStylistAssignedBy: { type: String, default: '' },
+  defaultStylistAssignedAt: { type: Date, default: null },
+  preferredStylistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
+  lastStylistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
 
   visitStats: {
     averageFrequencyWeeks: Number,

@@ -16,7 +16,7 @@
     {
       "templateType": "reminder",
       "enabled": true,
-      "smsTemplate": "Reminder: {{service}} on {{date}} at {{time}} at Rakie Salon.",
+      "smsTemplate": "Hi {{clientName}}, this is a reminder from Rakie Salon for your {{service}} on {{date}} at {{time}}",
       "emailTemplate": "Dear {{clientName}},<br><br>This is a reminder for {{service}} on {{date}} at {{time}}."
     },
     {

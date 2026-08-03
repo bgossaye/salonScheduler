@@ -4,7 +4,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "cross-env PORT=5000 NODE_ENV=development nodemon server.js"
+    "dev": "cross-env PORT=5000 NODE_ENV=development nodemon server.js",
+    "test:e2e:full": "node scripts/rakie-full-e2e.cjs",
+    "test:e2e:full:start": "node scripts/rakie-full-e2e.cjs --start-server --base-url=http://localhost:5000"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

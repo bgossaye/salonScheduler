@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const giftCardController = require('../../controllers/admin/giftcardcontroller');
+const auth = require('../../middleware/authmiddleware');
+
+router.use(auth);
+router.use(auth.requirePermission('giftCardsManage'));
 
 // Create digital or physical gift card
 router.post('/create', giftCardController.createGiftCard);

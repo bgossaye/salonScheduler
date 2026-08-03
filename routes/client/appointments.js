@@ -1,13 +1,17 @@
 const express = require('express');
 const router = express.Router();
+const controller = require('../../controllers/client/appointmentcontroller');
 
-// use the SAME admin controller for both sides
-const appt = require('../../controllers/admin/appointmentadmincontroller');
-
-// Client-facing endpoints now delegate to the shared controller
-router.get('/client/:id', appt.getAppointmentsForClient);
-router.post('/', appt.createAppointment);
-router.patch('/:id', appt.updateAppointment);
-router.delete('/:id', appt.deleteAppointment);
+// Public/client appointment endpoints. Admin appointment management remains under /api/admin/appointments.
+router.get('/', controller.getClientAppointments);
+router.get('/client/:id', controller.getAppointmentsForClient);
+router.post('/', controller.createAppointment);
+router.post('/batch', controller.createAppointmentBatch);
+router.patch('/:id', controller.updateAppointment);
+router.put('/:id', controller.updateAppointment);
+router.post('/update/:id', controller.updateAppointmentFromBody);
+router.post('/update', controller.updateAppointmentFromBody);
+router.put('/', controller.updateAppointmentFromBody);
+router.delete('/:id', controller.cancelAppointment);
 
 module.exports = router;

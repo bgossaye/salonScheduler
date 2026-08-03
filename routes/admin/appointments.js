@@ -1,12 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../../controllers/admin/appointmentadmincontroller');
-const Appointment = require('../../models/appointment');
+const auth = require('../../middleware/authmiddleware');
 
-router.get('/', controller.getAppointments);
-router.post('/', controller.createAppointment);  
-router.patch('/:id', controller.updateAppointment);
-router.delete('/:id', controller.deleteAppointment);
+const { requirePermission, requireAnyPermission } = auth;
 
+router.use(auth);
+
+router.get('/', requireAnyPermission(['appointmentsViewAll', 'appointmentsViewOwn']), controller.getAppointments);
+router.post('/', requireAnyPermission(['appointmentsCreate', 'appointmentsCreateOwn', 'appointmentsCreateForOthers']), controller.createAppointment);
+router.post('/group', requireAnyPermission(['appointmentsCreate', 'appointmentsCreateForOthers']), controller.createGroupAppointments);
+router.patch('/:id', requireAnyPermission(['appointmentsEdit', 'appointmentsEditOwn', 'appointmentsEditForOthers', 'appointmentsCancel', 'appointmentsComplete']), controller.updateAppointment);
+router.delete('/:id', requirePermission('appointmentsDelete'), controller.deleteAppointment);
 
 module.exports = router;

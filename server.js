@@ -7,6 +7,9 @@ const cron = require('node-cron');
 const sendSMS = require('./utils/sendSMS');
 const Appointment = require('./models/appointment');
 const Client = require('./models/client');
+const { installSystemErrorCapture } = require('./utils/systemErrorLogger');
+installSystemErrorCapture();
+const { ensureRakebWorkerAndMigrate } = require('./utils/workerPricing');
 const giftCardRoutes = require('./routes/admin/giftcard');
 const path = require('path'); 
 const helmet = require("helmet");
@@ -36,14 +39,22 @@ async function sendDailyReminders() {
     const formattedDate = `${yyyy}-${mm}-${dd}`;
 
     const appointments = await Appointment
-      .find({ date: formattedDate })
-      .populate('clientId serviceId');
+      .find({ date: formattedDate, status: 'booked' })
+      .populate('clientId serviceId')
+      .lean();
 
     for (const appt of appointments) {
         if (!appt.clientId) continue;
-        if (appt.status !== 'booked') continue;
-      // Use DB template (NotificationSettings.reminder); no hard-coded message:
-        await sendSMS('reminder', appt);
+        if (!appt.date || !appt.time) {
+          console.warn('[reminders] Appointment reminder missing stored date/time; sending generic fallback through sendSMS', {
+            apptId: String(appt._id || ''),
+            date: appt.date || '',
+            time: appt.time || '',
+          });
+        }
+        // Use DB template (NotificationSettings.reminder); no hard-coded message.
+        // Pass the stored DB date/time explicitly so reminder formatting never has to reconstruct it.
+        await sendSMS('reminder', appt, { date: appt.date, time: appt.time });
     }
 }
 
@@ -52,7 +63,9 @@ async function sendDailyReminders() {
 mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
     console.log('✅ MongoDB connected');
-    // now continue with the rest of your startup (e.g., app.listen)
+    ensureRakebWorkerAndMigrate({ verbose: true }).catch(err => {
+      console.error('❌ Staff/worker migration failed:', err);
+    });
   })
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
@@ -131,13 +144,20 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
- // Health (Mongo-backed awake marker)
- //app.use('/api', require('./routes/health'));
 
 // ─────────────────────────────────────────────────────────────
 // Lightweight health endpoint (NO DB check; safe for cron/wake)
 // Supports GET (fetch) and POST (sendBeacon)
 // ─────────────────────────────────────────────────────────────
+app.get('/api/deployment-version', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({
+    app: 'rakie-backend',
+    version: '2026-07-31-public-deals-v1',
+    publicRoutes: ['/api/promotions/active', '/api/booking-status'],
+  });
+});
+
 app.get('/api/healthz', (req, res) => {
   res.set('Cache-Control', 'no-store');
   return res.status(200).json({ ok: true, ts: Date.now() });
@@ -186,14 +206,25 @@ const clientRoutes =      require('./routes/client/clients');
 const appointmentRoutes = require('./routes/client/appointments');
 const serviceRoutes =     require('./routes/client/services');
 const availabilityRoutes = require('./routes/shared/availability');
+const publicStoreHours = require('./routes/shared/storehours');
+const publicBookingStatus = require('./routes/shared/bookingstatus');
 const schedulingRoutes = require('./routes/schedulingroutes');
+const promotionRoutes = require('./routes/client/promotions');
+const publicWorkers = require('./routes/client/workers');
 
 // Use the route
 app.use('/api/clients', clientRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/availability', availabilityRoutes);
+app.use('/api/store-hours', publicStoreHours);
+app.use('/api/booking-status', publicBookingStatus);
 app.use('/api/schedule', schedulingRoutes);
+app.use('/api/promotions', promotionRoutes);
+// Public compatibility aliases for website clients deployed against older paths.
+app.use('/api/public/promotions', promotionRoutes);
+app.use('/api/client/promotions', promotionRoutes);
+app.use('/api/workers', publicWorkers);
 
 
 // ✅ Admin Routes
@@ -205,6 +236,11 @@ const adminAuth = require('./routes/admin/auth');
 const adminReports = require('./routes/admin/reports');
 const adminExport = require('./routes/admin/export');
 const notificationtemplate = require('./routes/admin/notificationtemplate');
+const adminRuntimeSettings = require('./routes/admin/runtimesettings');
+const adminPromotionDeals = require('./routes/admin/promotiondeals');
+const adminWorkers = require('./routes/admin/workers');
+const adminDashboard = require('./routes/admin/dashboard');
+const adminSystemErrors = require('./routes/admin/systemerrors');
 
 app.use('/api/admin/appointments', adminAppointments);
 app.use('/api/admin/clients', adminClients);
@@ -217,6 +253,14 @@ app.use('/api/twilio', require('./routes/external/twilio'));
 app.use('/api/admin/status-logs', require('./routes/admin/statuslogs'));
 app.use('/api/giftcards', giftCardRoutes);
 app.use('/api/admin/notificationsettings', notificationtemplate);
+app.use('/api/admin/runtime-settings', adminRuntimeSettings);
+app.use('/api/admin/promotion-deals', adminPromotionDeals);
+app.use('/api/admin/workers', adminWorkers);
+app.use('/api/admin/dashboard', adminDashboard);
+app.use('/api/admin/notifications', require('./routes/admin/notifications'));
+app.use('/api/admin/reminders', require('./routes/admin/reminders'));
+app.use('/api/admin/system-errors', adminSystemErrors);
+app.use('/api/sms', inbound);
 
 // Serve booking at /booking
  app.use('/booking', express.static(bookingBuild, { index: false }));
@@ -224,8 +268,6 @@ app.use('/api/admin/notificationsettings', notificationtemplate);
 
 app.get('/booking/*', (_, res) => res.sendFile(path.join(bookingBuild, 'index.html')));
 app.get('*', (_, res) => res.sendFile(path.join(siteBuild, 'index.html')));
-
-app.use('/api/sms', inbound);
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;

@@ -2,9 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const StatusLog = require('../../models/statusLog');
+const auth = require('../../middleware/authmiddleware');
+
+router.use(auth);
 
 // GET /api/admin/status-logs
-router.get('/', async (req, res) => {
+router.get('/', auth.requireAnyPermission(['auditLogView', 'systemErrorsView']), async (req, res) => {
   try {
     const logs = await StatusLog.find().sort({ timestamp: -1 }).limit(100);
     res.json(logs);
