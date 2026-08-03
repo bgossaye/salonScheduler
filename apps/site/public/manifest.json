@@ -1,0 +1,44 @@
+{
+  "name": "Rakie Salon",
+  "short_name": "RakieSalon",
+  "description": "Book appointments and manage your salon.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Book Now",
+      "url": "/booking",
+      "description": "Open booking"
+    },
+    {
+      "name": "Admin Login",
+      "url": "/booking/admin/login",
+      "description": "Go to admin"
+    }
+  ],
+  "id": "/",
+  "prefer_related_applications": false
+}

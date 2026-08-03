@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    { "source": "/admin",         "destination": "/booking/admin/login", "permanent": true },
+    { "source": "/booking/admin", "destination": "/booking/admin/login", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/booking/:path*", "destination": "/booking/index.html" },
+    { "source": "/(.*)",           "destination": "/index.html" }
+  ]
+}

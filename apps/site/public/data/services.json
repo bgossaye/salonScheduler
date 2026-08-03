@@ -1,0 +1,687 @@
+{
+  "exportedAt": "2025-09-23T23:37:54.055Z",
+  "count": 30,
+  "services": [
+    {
+      "_id": "6825f35ddc656c40f65db8d0",
+      "name": "Single Process With Style",
+      "category": "Color",
+      "price": 100,
+      "priceCents": 10000,
+      "duration": 90,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 22
+        },
+        {
+          "name": "Wait",
+          "duration": 22
+        },
+        {
+          "name": "Wash",
+          "duration": 22
+        },
+        {
+          "name": "Style",
+          "duration": 22
+        }
+      ],
+      "suggestedAddOns": [
+        {
+          "_id": "6825f35ddc656c40f65db8d6",
+          "name": "Bang Trim"
+        },
+        {
+          "_id": "6825f35ddc656c40f65db8e0",
+          "name": "Steam Treatment"
+        },
+        {
+          "_id": "6825f35ddc656c40f65db8ec",
+          "name": "Tone"
+        }
+      ],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d2",
+      "name": "Single Process*",
+      "category": "Color",
+      "price": 60,
+      "priceCents": 6000,
+      "duration": 60,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 20
+        },
+        {
+          "name": "Wait",
+          "duration": 20
+        },
+        {
+          "name": "Wash",
+          "duration": 20
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d4",
+      "name": "Full Highlights",
+      "category": "Color",
+      "price": 125,
+      "priceCents": 12500,
+      "duration": 120,
+      "steps": [
+        {
+          "name": "Foil",
+          "duration": 60
+        },
+        {
+          "name": "Process",
+          "duration": 30
+        },
+        {
+          "name": "Wash",
+          "duration": 30
+        },
+        {
+          "name": "Dry",
+          "duration": 45
+        }
+      ],
+      "suggestedAddOns": [
+        {
+          "_id": "6825f35ddc656c40f65db8ec",
+          "name": "Tone"
+        },
+        {
+          "_id": "6825f35ddc656c40f65db8de",
+          "name": "Deep Conditioning"
+        }
+      ],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d5",
+      "name": "Face Frame Highlights (Accent)",
+      "category": "Color",
+      "price": 40,
+      "priceCents": 4000,
+      "duration": 60,
+      "steps": [
+        {
+          "name": "Foil",
+          "duration": 15
+        },
+        {
+          "name": "Process",
+          "duration": 15
+        },
+        {
+          "name": "Wash",
+          "duration": 15
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d6",
+      "name": "Bang Trim",
+      "category": "Haircut",
+      "price": 12,
+      "priceCents": 1200,
+      "duration": 15,
+      "steps": [
+        {
+          "name": "Trim",
+          "duration": 15
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d7",
+      "name": "Wet Haircut",
+      "category": "Haircut",
+      "price": 40,
+      "priceCents": 4000,
+      "duration": 30,
+      "steps": [
+        {
+          "name": "Cut",
+          "duration": 15
+        },
+        {
+          "name": "Blow-dry",
+          "duration": 15
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d8",
+      "name": "Haircut Blow-dry",
+      "category": "Haircut",
+      "price": 50,
+      "priceCents": 5000,
+      "duration": 45,
+      "steps": [
+        {
+          "name": "Cut",
+          "duration": 22
+        },
+        {
+          "name": "Blow-dry",
+          "duration": 22
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8d9",
+      "name": "Men's Haircut",
+      "category": "Haircut",
+      "price": 40,
+      "priceCents": 4000,
+      "duration": 30,
+      "steps": [
+        {
+          "name": "Cut",
+          "duration": 15
+        },
+        {
+          "name": "Style",
+          "duration": 15
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8da",
+      "name": "Blow-Dry",
+      "category": "Style",
+      "price": 40,
+      "priceCents": 4000,
+      "duration": 45,
+      "steps": [
+        {
+          "name": "Wash",
+          "duration": 15
+        },
+        {
+          "name": "Dry",
+          "duration": 15
+        },
+        {
+          "name": "Style",
+          "duration": 15
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8db",
+      "name": "Wash, Set, blow-dry, Iron",
+      "category": "Style",
+      "price": 65,
+      "priceCents": 6500,
+      "duration": 60,
+      "steps": [
+        {
+          "name": "Part",
+          "duration": 20
+        },
+        {
+          "name": "Twist",
+          "duration": 20
+        },
+        {
+          "name": "Curl",
+          "duration": 20
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8dc",
+      "name": "Ponytail*",
+      "category": "Style",
+      "price": 40,
+      "priceCents": 4000,
+      "duration": 30,
+      "steps": [
+        {
+          "name": "Smooth",
+          "duration": 15
+        },
+        {
+          "name": "Secure",
+          "duration": 15
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8dd",
+      "name": "Wash And Set",
+      "category": "Style",
+      "price": 30,
+      "priceCents": 3000,
+      "duration": 75,
+      "steps": [
+        {
+          "name": "Wash",
+          "duration": 25
+        },
+        {
+          "name": "Set",
+          "duration": 25
+        },
+        {
+          "name": "Flat Iron",
+          "duration": 25
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8de",
+      "name": "Deep Conditioning",
+      "category": "Treatment",
+      "price": 15,
+      "priceCents": 1500,
+      "duration": 30,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 10
+        },
+        {
+          "name": "Steam",
+          "duration": 10
+        },
+        {
+          "name": "Rinse",
+          "duration": 10
+        }
+      ],
+      "suggestedAddOns": [
+        {
+          "_id": "6825f35ddc656c40f65db8d6",
+          "name": "Bang Trim"
+        },
+        {
+          "_id": "6825f35ddc656c40f65db8e6",
+          "name": "Eyebrows Wax"
+        }
+      ],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8df",
+      "name": "Rejuvenating Treatment*",
+      "category": "Treatment",
+      "price": 35,
+      "priceCents": 3500,
+      "duration": 30,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 10
+        },
+        {
+          "name": "Massage",
+          "duration": 10
+        },
+        {
+          "name": "Rinse",
+          "duration": 10
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e0",
+      "name": "Steam Treatment",
+      "category": "Treatment",
+      "price": 25,
+      "priceCents": 2500,
+      "duration": 20,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 10
+        },
+        {
+          "name": "Steam",
+          "duration": 10
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e2",
+      "name": "Balayage With Toner!",
+      "category": "Color",
+      "price": 200,
+      "priceCents": 20000,
+      "duration": 120,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 24
+        },
+        {
+          "name": "Wait",
+          "duration": 24
+        },
+        {
+          "name": "Wash",
+          "duration": 24
+        },
+        {
+          "name": "Dry",
+          "duration": 24
+        },
+        {
+          "name": "Style",
+          "duration": 24
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e3",
+      "name": "Eye Brow Tent",
+      "category": "Color",
+      "price": 15,
+      "priceCents": 1500,
+      "duration": 15,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 7
+        },
+        {
+          "name": "Set",
+          "duration": 7
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e4",
+      "name": "Relaxer With Style",
+      "category": "Texturizing",
+      "price": 160,
+      "priceCents": 16000,
+      "duration": 90,
+      "steps": [
+        {
+          "name": "Relax",
+          "duration": 30
+        },
+        {
+          "name": "Rinse",
+          "duration": 30
+        },
+        {
+          "name": "Style",
+          "duration": 30
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e5",
+      "name": "Relaxing",
+      "category": "Texturizing",
+      "price": 80,
+      "priceCents": 8000,
+      "duration": 60,
+      "steps": [
+        {
+          "name": "Relax",
+          "duration": 30
+        },
+        {
+          "name": "Rinse",
+          "duration": 30
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e6",
+      "name": "Eyebrows Wax",
+      "category": "Hair Removal",
+      "price": 10,
+      "priceCents": 1000,
+      "duration": 15,
+      "steps": [
+        {
+          "name": "Shape",
+          "duration": 7
+        },
+        {
+          "name": "Wax",
+          "duration": 7
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e7",
+      "name": "Perm",
+      "category": "Texturizing",
+      "price": 80,
+      "priceCents": 8000,
+      "duration": 90,
+      "steps": [
+        {
+          "name": "Wrap",
+          "duration": 30
+        },
+        {
+          "name": "Process",
+          "duration": 30
+        },
+        {
+          "name": "Rinse",
+          "duration": 30
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e8",
+      "name": "Chin Wax",
+      "category": "Hair Removal",
+      "price": 10,
+      "priceCents": 1000,
+      "duration": 15,
+      "steps": [
+        {
+          "name": "Cleanse",
+          "duration": 7
+        },
+        {
+          "name": "Wax",
+          "duration": 7
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8e9",
+      "name": "Underarms Wax",
+      "category": "Hair Removal",
+      "price": 25,
+      "priceCents": 2500,
+      "duration": 20,
+      "steps": [
+        {
+          "name": "Cleanse",
+          "duration": 10
+        },
+        {
+          "name": "Wax",
+          "duration": 10
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8ea",
+      "name": "Lip Wax",
+      "category": "Hair Removal",
+      "price": 8,
+      "priceCents": 800,
+      "duration": 15,
+      "steps": [
+        {
+          "name": "Cleanse",
+          "duration": 7
+        },
+        {
+          "name": "Wax",
+          "duration": 7
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8eb",
+      "name": "Trim",
+      "category": "Haircut",
+      "price": 15,
+      "priceCents": 1500,
+      "duration": 30,
+      "steps": [
+        {
+          "name": "Dry",
+          "duration": 30
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "6825f35ddc656c40f65db8ec",
+      "name": "Tone",
+      "category": "Color",
+      "price": 15,
+      "priceCents": 1500,
+      "duration": 20,
+      "steps": [
+        {
+          "name": "Apply",
+          "duration": 10
+        },
+        {
+          "name": "Rinse",
+          "duration": 10
+        }
+      ],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "68d19e2d80ca158db11c3321",
+      "name": "Partial Foil",
+      "category": "Color",
+      "price": 50,
+      "priceCents": 5000,
+      "duration": 45,
+      "steps": [],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "68d1a0f680ca158db11c377c",
+      "name": "Updo*",
+      "category": "Style",
+      "price": 65,
+      "priceCents": 6500,
+      "duration": 45,
+      "steps": [],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "68d1a2fc80ca158db11c3a9f",
+      "name": "Hairline",
+      "category": "Color",
+      "price": 30,
+      "priceCents": 3000,
+      "duration": 30,
+      "steps": [],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    },
+    {
+      "_id": "68d1a33580ca158db11c3af8",
+      "name": "Iron Work",
+      "category": "Style",
+      "price": 20,
+      "priceCents": 2000,
+      "duration": 15,
+      "steps": [],
+      "suggestedAddOns": [],
+      "active": true,
+      "order": 0
+    }
+  ]
+}

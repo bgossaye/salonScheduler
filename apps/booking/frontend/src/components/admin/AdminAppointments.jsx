@@ -4,6 +4,13 @@ import API from '../../api';
 import { formatDate, formatTime } from '../../utils/formatHelper';
 import AppointmentFormModal from './AppointmentFormModal';
 import { toast } from 'react-toastify';
+import { getAdminUser } from '../../utils/permissions';
+import {
+  doesAppointmentQualifyForSpecial,
+  getAppointmentServiceName,
+  getSpecialAppointmentBadgeText,
+  usePromotionConfig,
+} from '../../utils/specialDeals';
 
 import {
   getNextOpenDate,
@@ -25,9 +32,38 @@ const renderAddOns = (addOns) => {
     : '—';
 };
 
+const idOf = (value) => String(value?._id || value || '');
+
+const getWorkerName = (appt) =>
+  appt?.workerName || appt?.workerId?.displayName || appt?.priceSnapshot?.workerName || 'Rakeb G';
+
+const money = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? `$${number.toFixed(2)}` : null;
+};
+
+const getAppointmentPriceDetails = (appt) => {
+  const snapshot = appt?.priceSnapshot || {};
+  const originalNumber = Number(snapshot.servicePrice || 0) + Number(snapshot.addOnPrice || 0);
+  const discountNumber = Number(snapshot.discountAmount || 0);
+  const finalValue = snapshot.finalPrice ?? appt?.finalPrice ?? appt?.price ?? (originalNumber > 0 ? Math.max(0, originalNumber - discountNumber) : null);
+  const promotion = appt?.appliedPromotion || null;
+  const couponCode = String(promotion?.couponCode || appt?.couponCode || '').trim().toUpperCase();
+
+  return {
+    original: originalNumber > 0 ? money(originalNumber) : null,
+    discount: discountNumber > 0 ? money(discountNumber) : null,
+    final: finalValue == null || finalValue === '' ? '—' : money(finalValue),
+    label: promotion?.appointmentLabel || promotion?.title || (couponCode ? `${couponCode} coupon` : ''),
+    couponCode,
+    applied: discountNumber > 0 || !!promotion || !!couponCode,
+  };
+};
+
 export default function AdminAppointments() {
   const [appointments, setAppointments] = useState([]);
-  const [filters, setFilters] = useState({ date: '', status: 'booked', client: '' });
+  const [workers, setWorkers] = useState([]);
+  const [filters, setFilters] = useState({ date: '', status: 'booked', client: '', workerId: '' });
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAppt, setSelectedAppt] = useState(null);
   const [selectedClient, setSelectedClient] = useState(null);
@@ -36,9 +72,19 @@ export default function AdminAppointments() {
   const [search] = useState('');
   const [rebookPrompt, setRebookPrompt] = useState({ visible: false, appt: null, nextDate: null });
   const [statusTouched, setStatusTouched] = useState(false);
+  const { promotionConfig } = usePromotionConfig();
+  const shouldShowWorkerPromotion = promotionConfig.enabled && promotionConfig.showWorkerBadges;
+  const adminUser = getAdminUser();
+  const canChangeClientDefaultStylist = ['owner', 'admin'].includes(String(adminUser?.roleKey || adminUser?.role || '').toLowerCase());
 
 // Ensure backend is awake when landing directly on Admin (persisted sessions)
 useEffect(() => { wakeRender({ tag: 'admin-appointments' }); }, []);
+
+useEffect(() => {
+  API.get('/admin/workers', { params: { active: true } })
+    .then(({ data }) => setWorkers(data?.workers || data || []))
+    .catch((err) => console.error('Failed to fetch workers', err));
+}, []);
 
 const fetchAppointments = useCallback(async () => {
   try {
@@ -121,7 +167,18 @@ const filteredAppointments = appointments
 
 const handleSave = async (form) => {
   try {
-    if (selectedAppt?._id) {
+    if (form?.groupBooking) {
+      const rows = Array.isArray(form.appointments) ? form.appointments : [];
+      if (rows.length < 2) {
+        toast.warning('Group booking needs at least two appointment rows.');
+        return;
+      }
+      await API.post('/admin/appointments/group', {
+        group: form.group || {},
+        appointments: rows.map(({ _clientName, _serviceName, _workerName, ...row }) => row),
+      });
+      toast.success(`Group booking saved with ${rows.length} appointments`);
+    } else if (selectedAppt?._id) {
       // existing edit
       await API.patch(`/admin/appointments/${selectedAppt._id}`, form);
       toast.success('Appointment successfully updated');
@@ -146,7 +203,8 @@ const handleSave = async (form) => {
     fetchAppointments();
   } catch (err) {
     console.error('Save failed:', err);
-    toast.error('Failed to save appointment.');
+    toast.error(err?.response?.data?.error || 'Failed to save appointment.');
+    throw err;
   }
 };
 
@@ -205,6 +263,16 @@ const handleSave = async (form) => {
           onChange={(e) => setFilters({ ...filters, client: e.target.value })}
           className="border px-2 py-1"
         />
+        <select
+          value={filters.workerId}
+          onChange={(e) => setFilters({ ...filters, workerId: e.target.value })}
+          className="border px-2 py-1"
+        >
+          <option value="">All stylists</option>
+          {workers.map((worker) => (
+            <option key={worker._id} value={worker._id}>{worker.displayName || [worker.firstName, worker.lastName].filter(Boolean).join(' ')}</option>
+          ))}
+        </select>
         <button
           onClick={() => { setSelectedAppt(null); setModalOpen(true); }}
           className="bg-blue-600 text-white px-4 py-2 ml-auto"
@@ -220,6 +288,8 @@ const handleSave = async (form) => {
             <th className="p-2 border">Time</th>
             <th className="p-2 border">Client</th>
             <th className="p-2 border">Service</th>
+            <th className="p-2 border">Stylist</th>
+            <th className="p-2 border">Price</th>
             <th className="p-2 border">Add-ons</th>
             <th className="p-2 border">Actions</th>
           </tr>
@@ -235,6 +305,11 @@ const now   = new Date();
 const isPending    = appt.status === 'pending';
 const isPastBooked = appt.status === 'booked' && now > end;       // past end → still booked
 const isTodayBooked= appt.status === 'booked' && now.toDateString() === start.toDateString();
+const serviceName = getAppointmentServiceName(appt);
+const workerName = getWorkerName(appt);
+const appointmentPrice = getAppointmentPriceDetails(appt);
+const qualifiesForSpecial = shouldShowWorkerPromotion && doesAppointmentQualifyForSpecial(appt, promotionConfig);
+const specialBadgeText = qualifiesForSpecial ? getSpecialAppointmentBadgeText(appt, promotionConfig) : '';
 
     return (
 <tr
@@ -243,6 +318,7 @@ const isTodayBooked= appt.status === 'booked' && now.toDateString() === start.to
     ${isPending ? 'bg-yellow-200' : ''}
     ${!isPending && isPastBooked ? 'bg-red-200' : ''}     /* past booked → red */
     ${!isPending && !isPastBooked && isTodayBooked ? 'bg-green-200' : ''}
+    ${qualifiesForSpecial ? 'border-l-4 border-l-amber-400' : ''}
   `}
 >
 <td className="p-2 border text-center">
@@ -284,6 +360,14 @@ const isTodayBooked= appt.status === 'booked' && now.toDateString() === start.to
                 >
 {[appt.clientId?.firstName, appt.clientId?.lastName].filter(Boolean).join(' ') || 'N/A'}
                 </button>
+                {appt.groupBooking?.groupBookingId && (
+                  <div className="text-[10px] text-purple-700 font-semibold">
+                    Group {appt.groupBooking.sequence || ''}/{appt.groupBooking.totalAppointments || ''}
+                    {appt.groupBooking.groupLabel ? ` · ${appt.groupBooking.groupLabel}` : ''}
+                    {appt.groupBooking.participantRole ? ` · ${appt.groupBooking.participantRole}` : ''}
+                    {appt.groupBooking.participantStatus === 'event_guest' ? ' · event guest' : ''}
+                  </div>
+                )}
 
                 {showClientModal && selectedClient && (
                     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -304,6 +388,24 @@ const isTodayBooked= appt.status === 'booked' && now.toDateString() === start.to
   />
 </div>
                             <p><strong>Phone:</strong> {selectedClient.phone}</p>
+
+                            <div className="mt-2">
+                              <label className="text-sm font-medium block">Assigned Stylist:</label>
+                              <select
+                                className="border rounded px-2 py-1 w-full disabled:bg-gray-100 disabled:text-gray-500"
+                                value={idOf(selectedClient.assignedStylistId)}
+                                disabled={!canChangeClientDefaultStylist}
+                                onChange={(e) => setSelectedClient(prev => ({ ...prev, assignedStylistId: e.target.value }))}
+                              >
+                                <option value="">No assigned stylist</option>
+                                {workers.map((worker) => (
+                                  <option key={worker._id} value={worker._id}>{worker.displayName || [worker.firstName, worker.lastName].filter(Boolean).join(' ')}</option>
+                                ))}
+                              </select>
+                              {!canChangeClientDefaultStylist && (
+                                <p className="mt-1 text-xs text-gray-500">Only owner/admin can change the client’s default stylist.</p>
+                              )}
+                            </div>
 
                             <div className="mb-2">
                                 <label htmlFor= "wknum" className="text-sm font-medium block">Rebooks every (weeks):</label>
@@ -358,11 +460,15 @@ const isTodayBooked= appt.status === 'booked' && now.toDateString() === start.to
                                 <button
                                     onClick={async () => {
                                         try {
-await API.patch(`/admin/clients/${selectedClient._id}`, {
+const clientPatch = {
   notes: editableNote,
   visitFrequency: selectedClient.visitFrequency,
-  nickname: selectedClient.nickname
-});
+  nickname: selectedClient.nickname,
+};
+if (canChangeClientDefaultStylist) {
+  clientPatch.assignedStylistId = selectedClient.assignedStylistId || null;
+}
+await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
 
                                             setShowClientModal(false);
                                             await fetchAppointments();
@@ -387,7 +493,58 @@ await API.patch(`/admin/clients/${selectedClient._id}`, {
                     </div>
                 )}
               </td>
-              <td className="p-2 border">{appt.serviceId?.name || appt.service || 'N/A'}</td>
+              <td className="p-2 border">
+                <div className="font-medium">{serviceName}</div>
+                {qualifiesForSpecial && (
+                  <span
+                    className={`mt-1 inline-block rounded-full px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wide ${
+                      qualifiesForSpecial
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                        : 'bg-gray-100 text-gray-600 border border-gray-200'
+                    }`}
+                  >
+                    {specialBadgeText}
+                  </span>
+                )}
+              </td>
+              <td className="p-2 border text-center">
+                <div className="font-medium">{workerName}</div>
+                {appt.workerTitle && <div className="text-xs text-gray-500">{appt.workerTitle}</div>}
+                {appt.oneTimeStylistChange && (
+                  <div className="mt-1 text-[10px] font-semibold text-amber-700">One-time stylist</div>
+                )}
+                {appt.requiresReceivingStylistConfirmation && (
+                  <div className="mt-1 text-[10px] font-semibold text-red-700">Needs stylist confirmation</div>
+                )}
+                {appt.bookedByName && (
+                  <div className="mt-1 text-[10px] text-gray-500">Booked by {appt.bookedByName}</div>
+                )}
+                {appt.groupBooking?.bookedByContactName && (
+                  <div className="mt-1 text-[10px] text-purple-700">Contact: {appt.groupBooking.bookedByContactName}</div>
+                )}
+                {appt.groupBooking?.participantNotes && (
+                  <div className="mt-1 text-[10px] text-purple-700">Group note: {appt.groupBooking.participantNotes}</div>
+                )}
+              </td>
+              <td className="p-2 border text-center">
+                {appointmentPrice.applied ? (
+                  <div className="space-y-1">
+                    <div className="inline-flex flex-wrap items-center justify-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800">
+                      <span>{appointmentPrice.label || 'Coupon applied'}</span>
+                      {appointmentPrice.couponCode && <span>({appointmentPrice.couponCode})</span>}
+                    </div>
+                    {appointmentPrice.original && appointmentPrice.discount && (
+                      <div className="text-xs text-gray-600">
+                        <span className="line-through">{appointmentPrice.original}</span>
+                        <span className="ml-1 text-emerald-700">−{appointmentPrice.discount}</span>
+                      </div>
+                    )}
+                    <div className="font-semibold">{appointmentPrice.final}</div>
+                  </div>
+                ) : (
+                  <span className="font-medium">{appointmentPrice.final}</span>
+                )}
+              </td>
               <td className="p-2 border">{renderAddOns(appt.addOns)}</td>
               <td className="p-2 border space-x-2">
 

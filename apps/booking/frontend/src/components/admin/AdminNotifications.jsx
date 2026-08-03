@@ -21,12 +21,12 @@ const defaultMessages = {
   pending: 'Hi {{clientName}}, a confirmation for {{date}} at {{time}} for {{service}} will be sent to you shortly. Thank you',
   
 confirmation: 'Hi {{clientName}}, your appointment is confirmed for {{date}} at {{time}}.',
-  reminder: 'Hi {{clientName}}, this is a reminder for your appointment on {{date}} at {{time}}.',
+  reminder: 'Hi {{clientName}}, this is a reminder from Rakie Salon for your {{service}} on {{date}} at {{time}}',
   thankyou: 'Hi {{clientName}}, thank you for your visit! We hope to see you again soon.',
   promotion: 'Hi {{clientName}}, Special Offer! Enjoy a limited-time promotion at Rakie Salon. Details inside!',
   announcement: 'Hi {{clientName}}, Announcement from Rakie Salon: {{message}}',
   holiday: 'Hi {{clientName}}, Happy Holidays from Rakie Salon! Wishing you joy and beauty.',
-  cancelation: 'Hi {{clientName}}, your appointment on {{date}} at {{time}} has been canceled. Please contact us to reschedule.',
+  cancellation: 'Hi {{clientName}}, your appointment on {{date}} at {{time}} has been canceled. Please contact us to reschedule.',
   noshow: 'Hi {{clientName}}, we missed you today at {{time}} on {{date}}. Please contact us to reschedule or update your availability.'
 };
 
@@ -39,13 +39,14 @@ const defaultEmailMessages = {
   promotion: 'Dear {{clientName}},<br><br>Check out our latest promotion: {{message}}<br><br>Book now and save!',
   announcement: 'Dear {{clientName}},<br><br>{{message}}<br><br>Best,<br>Rakie Salon',
   holiday: 'Dear {{clientName}},<br><br>Warm wishes this season from all of us at Rakie Salon. Happy Holidays!',
-  cancelation: 'Dear {{clientName}},<br><br>Your appointment scheduled for {{date}} at {{time}} has been canceled.<br><br>Please contact us if you’d like to reschedule.',
+  cancellation: 'Dear {{clientName}},<br><br>Your appointment scheduled for {{date}} at {{time}} has been canceled.<br><br>Please contact us if you’d like to reschedule.',
   noshow: 'Dear {{clientName}},<br><br>We noticed you missed your appointment on {{date}} at {{time}}.<br><br>Please let us know if you’d like to reschedule. We’d love to see you soon!'
 };
 
 export default function AdminNotifications() {
   const [templates, setTemplates] = useState([]);
   const [masterEnabled, setMasterEnabled] = useState(null);
+  const [smsClientNameEnabled, setSmsClientNameEnabled] = useState(null);
   const [newSchedule, setNewSchedule] = useState({
     type: 'announcement',
     smsTemplate: '',
@@ -54,6 +55,7 @@ export default function AdminNotifications() {
 
   useEffect(() => {
     fetchTemplates();
+    fetchSmsClientNameSetting();
   }, []);
 
   const fetchTemplates = async () => {
@@ -70,16 +72,23 @@ export default function AdminNotifications() {
 
     setTemplates(data.templates || []);
   } catch (err) {
-    console.error("❌ Failed to fetch settings, trying fallback snapshot…", err);
-    try {
-      const { data: fb } = await API.get('/admin/notificationsettings/fallback');
-      console.warn('⚠️ Using fallback snapshot for templates');
-      setMasterEnabled(!!fb.masterNotificationsEnabled);
-      setTemplates(fb.templates || []);
-    } catch (err2) {
-      console.error("❌ Fallback snapshot also failed", err2);
- }  }
+    console.error("❌ Failed to fetch notification templates", err);
+    setMasterEnabled(false);
+    setTemplates([]);
+  }
 };
+
+
+  const fetchSmsClientNameSetting = async () => {
+    try {
+      const { data } = await API.get('/admin/runtime-settings');
+      const setting = (data.settings || []).find((item) => item.key === 'sms.clientName.enabled');
+      if (setting) setSmsClientNameEnabled(Boolean(setting.value));
+    } catch (err) {
+      console.warn('⚠️ Could not load SMS client-name runtime setting', err);
+      setSmsClientNameEnabled(null);
+    }
+  };
 
 
   const handleChange = (templateType, field, value) => {
@@ -121,6 +130,17 @@ export default function AdminNotifications() {
   return (
     <div className="p-4 max-w-4xl mx-auto">
       <h2 className="text-2xl font-bold mb-4">Manage SMS & Email Templates</h2>
+
+      <div className="mb-4 p-3 border border-blue-200 bg-blue-50 text-blue-900 rounded text-sm">
+        <strong>SMS client-name setting:</strong>{' '}
+        SMS templates may keep <code>{'{{clientName}}'}</code> or <code>{'[clientName]'}</code>, but outgoing SMS includes the name only when
+        <strong> Runtime Settings → SMS Content → Use client name in SMS </strong>
+        is enabled.
+        {' '}Current status:{' '}
+        <strong>
+          {smsClientNameEnabled === null ? 'Check Runtime Settings' : smsClientNameEnabled ? 'Enabled' : 'Disabled'}
+        </strong>.
+      </div>
 
       <div className="mb-6 p-4 border rounded bg-white">
   <label className="text-lg font-semibold block mb-2">Master Notification Switch</label>

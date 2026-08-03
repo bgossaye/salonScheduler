@@ -1,0 +1,51 @@
+{
+  "ts": "2025-09-23T18:24:41Z",
+  "placeId": "",
+  "items": [
+    {
+      "authorName": "Nana Chery!",
+      "authorPhoto": null,
+      "isLocalGuide": false,
+      "authorReviewsCount": 2,
+      "authorPhotosCount": 0,
+      "rating": 5,
+      "relativeTimeDescription": "7 days ago",
+      "isNew": true,
+      "text": "akeb was super detailed. She has amazing customer service, great conversation I will most definitely be back. I really loved her",
+      "services": [
+        "Shampoo & conditioning",
+        "Blowouts"
+      ],
+      "time": "2025-09-16T18:24:41Z"
+    },
+    {
+      "authorName": "Judine Williamson!",
+      "authorPhoto": null,
+      "isLocalGuide": false,
+      "authorReviewsCount": 1,
+      "authorPhotosCount": 0,
+      "rating": 5,
+      "relativeTimeDescription": "1 week ago",
+      "isNew": true,
+      "priceRange": "$180\u2013200",
+      "text": "I had a very positive experience at Rakie's salon. I recently relocated to Georgia and have been looking for a truly...",
+      "services": [],
+      "time": "2025-09-16T18:24:41Z"
+    },
+    {
+      "authorName": "H Norris!",
+      "authorPhoto": null,
+      "isLocalGuide": false,
+      "authorReviewsCount": 8,
+      "authorPhotosCount": 0,
+      "rating": 5,
+      "relativeTimeDescription": "2 weeks ago",
+      "isNew": true,
+      "text": "I can\u2019t say enough amazing things about my hairstylist, Rakie! Not only is she incredibly talented, but she also takes the time to really listen and make sure you leave with exactly what you envisioned (and usually something even better!). Every visit feels like a total transformation\u2014my hair has never looked healthier, shinier, or more stylish. On top of her skill, she\u2019s warm, welcoming, and makes the whole experience so enjoyable. Truly the best!",
+      "services": [
+        "Blowouts"
+      ],
+      "time": "2025-09-09T18:24:41Z"
+    }
+  ]
+}

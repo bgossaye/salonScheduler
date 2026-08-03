@@ -18,6 +18,8 @@ export default function ClientIntakeForm({
   const SCHEDULE_PATH = '/booking/schedule';
   const DASHBOARD_PATH = '/booking/dashboard';
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+  const pendingWelcomeOfferCode = typeof window !== 'undefined' ? localStorage.getItem('pendingWelcomeOfferCode') : '';
+  const pendingWelcomeOfferSource = typeof window !== 'undefined' ? localStorage.getItem('pendingWelcomeOfferSource') : '';
 
   const verifyMode = embed ? !!verify : params.get('verify') === '1';
   const setPinMode = embed ? !!propSetPin : params.get('setPin') === '1';
@@ -358,6 +360,10 @@ export default function ClientIntakeForm({
         method: 'sms',
         optInPromotions: form.contactPreferences?.optInPromotions === true,
       },
+      ...(!client && pendingWelcomeOfferCode === 'NEWCLIENT10' && {
+        welcomeOfferCode: 'NEWCLIENT10',
+        welcomeOfferSource: pendingWelcomeOfferSource || 'website_home_cta',
+      }),
     };
 
     const isNewSelfCreate = !client;
@@ -417,6 +423,10 @@ export default function ClientIntakeForm({
           email: response.data.email || '',
         }));
         localStorage.setItem('lastPhone', response.data.phone || '');
+        if (response.data?.welcomeOffer?.code === 'NEWCLIENT10') {
+          localStorage.removeItem('pendingWelcomeOfferCode');
+          localStorage.removeItem('pendingWelcomeOfferSource');
+        }
       } catch {/* ignore */}
 
       setStep('welcomeGuest');
@@ -469,6 +479,13 @@ export default function ClientIntakeForm({
   return (
     <div className="max-w-md mx-auto p-4 text-center relative">
       <img src={logo} alt="Rakie Salon Logo" className="w-24 h-24 mb-4 mx-auto opacity-80" />
+
+      {pendingWelcomeOfferCode === 'NEWCLIENT10' && !client && (
+        <div className="mb-4 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          <strong className="block">$10 new-client credit reserved</strong>
+          Finish creating your profile and it will remain available for your first booking.
+        </div>
+      )}
 
       {step === 'enterPhone' && !embed && (
         <>

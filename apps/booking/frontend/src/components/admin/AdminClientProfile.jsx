@@ -4,6 +4,12 @@ import API from '../../api';
 import { toast } from 'react-toastify';
 import { normalizeDateForInput } from '../../utils/formatHelper'; 
 import { coercePhone10, isTenDigit } from '../../utils/phone';
+import {
+  doesAppointmentQualifyForSpecial,
+  getAppointmentServiceName,
+  getSpecialAppointmentBadgeText,
+  usePromotionConfig,
+} from '../../utils/specialDeals';
 
 export default function AdminClientProfile() {
   const { id: clientId } = useParams();
@@ -15,6 +21,8 @@ export default function AdminClientProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const { promotionConfig } = usePromotionConfig();
+  const shouldShowWorkerPromotion = promotionConfig.enabled && promotionConfig.showWorkerBadges;
 
 useEffect(() => {
     const fetchClient = async () => {
@@ -288,14 +296,26 @@ const handleSave = async () => {
           {appointments.length === 0 ? (
             <tr><td colSpan="4" className="p-2 text-center">No appointments found.</td></tr>
           ) : (
-            appointments.map(appt => (
-              <tr key={appt._id}>
-                <td className="p-2 border">{appt.date}</td>
-                <td className="p-2 border">{appt.time}</td>
-                <td className="p-2 border">{appt.serviceId?.name || appt.service || 'N/A'}</td>
-                <td className="p-2 border capitalize">{appt.status}</td>
-              </tr>
-            ))
+            appointments.map(appt => {
+              const qualifiesForSpecial = shouldShowWorkerPromotion && doesAppointmentQualifyForSpecial(appt, promotionConfig);
+              const specialBadgeText = qualifiesForSpecial ? getSpecialAppointmentBadgeText(appt, promotionConfig) : '';
+              const serviceName = getAppointmentServiceName(appt);
+              return (
+                <tr key={appt._id}>
+                  <td className="p-2 border">{appt.date}</td>
+                  <td className="p-2 border">{appt.time}</td>
+                  <td className="p-2 border">
+                    <div>{serviceName}</div>
+                    {qualifiesForSpecial && (
+                      <span className="mt-1 inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                        {specialBadgeText}
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-2 border capitalize">{appt.status}</td>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>

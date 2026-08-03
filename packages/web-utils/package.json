@@ -1,0 +1,22 @@
+{
+  "name": "@rakie/web-utils",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "scripts": {
+    "build": "node -e \"console.log('web-utils: nothing to build (plain JS)')\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "wait-on": "^9.0.0"
+  }
+}

@@ -3,6 +3,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import API from '../api';
 import { toast } from 'react-toastify';
 import logo from '../assets/TheRSlogo.png';
+import {
+  doesAppointmentQualifyForSpecial,
+  getSpecialAppointmentBadgeText,
+  usePromotionConfig,
+} from '../utils/specialDeals';
 
 /** ===== Helpers ===== */
 // Treat an appointment as "active" only if its start is still in the future
@@ -27,16 +32,78 @@ function apptDate(appt) {
   return isNaN(when.getTime()) ? new Date(0) : when;
 }
 
-function latestByStatus(appts, status) {
-  const filtered = appts.filter(a => (a?.status || '').toLowerCase() === status);
-  if (!filtered.length) return null;
-  return filtered.reduce((latest, cur) => (apptDate(cur) > apptDate(latest) ? cur : latest), filtered[0]);
+
+function getWorkerName(appt) {
+  return appt?.workerName || appt?.workerId?.displayName || appt?.priceSnapshot?.workerName || null;
+}
+
+function money(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `$${number.toFixed(2)}` : null;
+}
+
+function getPriceDetails(appt) {
+  const snapshot = appt?.priceSnapshot || {};
+  const original = Number(snapshot.servicePrice || 0) + Number(snapshot.addOnPrice || 0);
+  const discount = Number(snapshot.discountAmount || 0);
+  const final = snapshot.finalPrice ?? (original > 0 ? Math.max(0, original - discount) : null);
+  const promotion = appt?.appliedPromotion || null;
+  const couponCode = String(promotion?.couponCode || appt?.couponCode || '').trim().toUpperCase();
+
+  return {
+    original: original > 0 ? money(original) : null,
+    discount: discount > 0 ? money(discount) : null,
+    final: final == null || final === '' ? null : money(final),
+    label: promotion?.appointmentLabel || promotion?.title || (couponCode ? `${couponCode} coupon` : ''),
+    couponCode,
+    applied: discount > 0 || !!promotion || !!couponCode,
+  };
+}
+
+function CouponPriceDetails({ appt }) {
+  const details = getPriceDetails(appt);
+  if (!details.final && !details.applied) return null;
+
+  return (
+    <div className="mt-1">
+      {details.applied && (
+        <div className="mb-1 inline-flex flex-wrap items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
+          <span>{details.label || 'Coupon applied'}</span>
+          {details.couponCode && <span>({details.couponCode})</span>}
+        </div>
+      )}
+      {details.applied && details.original && details.discount ? (
+        <div className="text-sm">
+          <div><strong>Original price:</strong> <span className="line-through text-gray-500">{details.original}</span></div>
+          <div className="text-emerald-700"><strong>Discount:</strong> -{details.discount}</div>
+          <div><strong>Final price:</strong> {details.final}</div>
+        </div>
+      ) : (
+        details.final && <p><strong>Price:</strong> {details.final}</p>
+      )}
+    </div>
+  );
+}
+
+function clientAuthPayload(client) {
+  return {
+    clientId: client?._id,
+    phone: client?.phone || client?.clientPhone || '',
+  };
 }
 
 export default function ClientDashboard({ client }) {
   const [effectiveClient, setEffectiveClient] = useState(() => client || readStoredClient());
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [bookingStatus, setBookingStatus] = useState({
+    currentNotices: [],
+    futureNotices: [],
+    promotions: [],
+    storeStatus: null,
+  });
+  const { promotionConfig } = usePromotionConfig();
+  const shouldShowClientPromotion = promotionConfig.enabled && promotionConfig.showClientBadges;
 
   // Track whether there were active appts at first load
   const hadActiveAtLoadRef = useRef(null); // null until first fetch settles
@@ -46,6 +113,21 @@ export default function ClientDashboard({ client }) {
       setEffectiveClient(client);
     }
   }, [client]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    API.get('/booking-status')
+      .then(({ data }) => {
+        setBookingStatus({
+          currentNotices: Array.isArray(data?.currentNotices) ? data.currentNotices : [],
+          futureNotices: Array.isArray(data?.futureNotices) ? data.futureNotices : [],
+          promotions: Array.isArray(data?.promotions) ? data.promotions : [],
+          storeStatus: data?.storeStatus || null,
+        });
+      })
+      .catch((error) => {
+        console.error('Unable to load booking notices:', error?.response?.data || error.message);
+      });
+  }, []);
 
   useEffect(() => {
     if (!effectiveClient) {
@@ -131,7 +213,7 @@ export default function ClientDashboard({ client }) {
       });
 
       // Make API call after updating UI optimistically (or swap order if you prefer strict)
-      await API.delete(`/appointments/${id}`);
+      await API.delete(`/appointments/${id}`, { data: clientAuthPayload(effectiveClient) });
       toast.success('Appointment canceled');
     } catch (err) {
       console.error('❌ Failed to cancel appointment:', err);
@@ -155,6 +237,26 @@ export default function ClientDashboard({ client }) {
       }
     }
   }, [loading, effectiveClient, activeAppointments.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dashboardNotices = [
+    ...bookingStatus.currentNotices.filter((notice) => !notice.onlineBookingOff),
+    ...bookingStatus.futureNotices,
+  ];
+  const noticeCount = dashboardNotices.length + bookingStatus.promotions.length;
+
+  const formatNoticeDate = (value) => {
+    if (!value) return '';
+    const date = new Date(`${value}T12:00:00`);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
+  const formatNoticeRange = (notice) => {
+    if (!notice?.startDate) return '';
+    const start = formatNoticeDate(notice.startDate);
+    const end = formatNoticeDate(notice.endDate);
+    return !end || notice.startDate === notice.endDate ? start : `${start}–${end}`;
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -180,6 +282,60 @@ export default function ClientDashboard({ client }) {
         </button>
       </header>
 
+      {noticeCount > 0 && (
+        <details className="mb-4 rounded-lg border border-gray-300 bg-white shadow-sm">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-gray-800">
+            <span className="flex min-w-0 items-center justify-between gap-2">
+              <span className={`min-w-0 truncate ${bookingStatus.storeStatus?.isOpenNow ? 'text-emerald-700' : 'text-red-700'}`}>
+                {bookingStatus.storeStatus?.statusText || 'Store status available'}
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                {bookingStatus.promotions.length > 0 && (
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">
+                    {bookingStatus.promotions.length} {bookingStatus.promotions.length === 1 ? 'deal' : 'deals'}
+                  </span>
+                )}
+                {bookingStatus.futureNotices.length > 0 && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
+                    {bookingStatus.futureNotices.length} future {bookingStatus.futureNotices.length === 1 ? 'closure' : 'closures'}
+                  </span>
+                )}
+              </span>
+            </span>
+          </summary>
+          <div className="space-y-2 border-t border-gray-200 p-3">
+            {bookingStatus.currentNotices.filter((notice) => !notice.onlineBookingOff).map((notice) => (
+              <div key={notice.id} className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                <div className="flex items-start justify-between gap-3">
+                  <strong>{notice.title}</strong>
+                  {formatNoticeRange(notice) && <span className="shrink-0 text-xs font-semibold text-red-700">{formatNoticeRange(notice)}</span>}
+                </div>
+                {notice.message && <p className="mt-1 text-xs text-red-800">{notice.message}</p>}
+                {notice.storeClosed && !notice.onlineBookingOff && <p className="mt-1 text-xs font-semibold">Online booking is available for another date.</p>}
+                {notice.open && notice.close && <p className="mt-1 text-xs font-semibold">Special hours: {notice.open}–{notice.close}</p>}
+              </div>
+            ))}
+            {bookingStatus.futureNotices.map((notice) => (
+              <div key={notice.id} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                <div className="flex items-start justify-between gap-3">
+                  <strong>{notice.title}</strong>
+                  {formatNoticeRange(notice) && <span className="shrink-0 text-xs font-semibold text-amber-800">{formatNoticeRange(notice)}</span>}
+                </div>
+                {notice.message && <p className="mt-1 text-xs text-amber-900">{notice.message}</p>}
+                {notice.storeClosed && !notice.onlineBookingOff && <p className="mt-1 text-xs font-semibold">Online booking will remain available for another date.</p>}
+                {notice.open && notice.close && <p className="mt-1 text-xs font-semibold">Special hours: {notice.open}–{notice.close}</p>}
+              </div>
+            ))}
+            {bookingStatus.promotions.map((promotion) => (
+              <div key={promotion.id} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+                <strong>{promotion.shortLabel ? `${promotion.shortLabel} — ` : ''}{promotion.title}</strong>
+                {promotion.message && <p className="mt-1 text-xs text-emerald-900">{promotion.message}</p>}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
       {loading ? (
         <p>Loading appointments...</p>
       ) : !effectiveClient ? (
@@ -201,10 +357,17 @@ export default function ClientDashboard({ client }) {
                     <span className="px-2 py-0.5 rounded bg-green-50 border border-green-200">
                       {norm(appt.status).toUpperCase()}
                     </span>
+                    {shouldShowClientPromotion && doesAppointmentQualifyForSpecial(appt, promotionConfig) && (
+                      <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-800 font-semibold">
+                        {getSpecialAppointmentBadgeText(appt, promotionConfig).toUpperCase()}
+                      </span>
+                    )}
                   </div>
                   <p><strong>Service:</strong> {appt.service}</p>
                   <p><strong>Date:</strong> {appt.date}</p>
                   <p><strong>Time:</strong> {appt.time}</p>
+                  {getWorkerName(appt) && <p><strong>Stylist:</strong> {getWorkerName(appt)}</p>}
+                  <CouponPriceDetails appt={appt} />
                   {appt.addOns?.length > 0 && (
                     <p className="text-sm text-gray-700">
                       <strong>Add-ons:</strong>{' '}
@@ -246,10 +409,17 @@ export default function ClientDashboard({ client }) {
                   <span className="px-2 py-0.5 rounded bg-slate-50 border border-slate-200">
                     {norm(pastAppointment.status).toUpperCase()}
                   </span>
+                  {shouldShowClientPromotion && doesAppointmentQualifyForSpecial(pastAppointment, promotionConfig) && (
+                    <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-800 font-semibold">
+                      {getSpecialAppointmentBadgeText(pastAppointment, promotionConfig).toUpperCase()}
+                    </span>
+                  )}
                 </div>
                 <p><strong>Service:</strong> {pastAppointment.service}</p>
                 <p><strong>Date:</strong> {pastAppointment.date}</p>
                 <p><strong>Time:</strong> {pastAppointment.time}</p>
+                {getWorkerName(pastAppointment) && <p><strong>Stylist:</strong> {getWorkerName(pastAppointment)}</p>}
+                <CouponPriceDetails appt={pastAppointment} />
                 {pastAppointment.addOns?.length > 0 && (
                   <p className="text-sm text-gray-700">
                     <strong>Add-ons:</strong>{' '}

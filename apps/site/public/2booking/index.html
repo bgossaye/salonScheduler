@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rakie Salon Appointment</title>
+  <meta name="description" content="Open or manage your Rakie Salon appointment." />
+
+  <!-- Compact SMS preview: favicon only; intentionally no og:image or twitter:image. -->
+  <meta property="og:title" content="Rakie Salon Appointment" />
+  <meta property="og:description" content="Open or manage your appointment." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://rakiesalon.com/2booking" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Rakie Salon Appointment" />
+  <meta name="twitter:description" content="Open or manage your appointment." />
+
+  <link rel="icon" type="image/png" sizes="16x16" href="/2booking/favicon-16x16.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/2booking/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="48x48" href="/2booking/favicon-48x48.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/2booking/favicon-192x192.png" />
+
+  <script>
+    (function () {
+      var destination = '/booking' + window.location.search + window.location.hash;
+      window.location.replace(destination);
+    }());
+  </script>
+</head>
+<body>
+  <p>Opening your Rakie Salon appointment…</p>
+  <noscript><a href="/booking">Continue to booking</a></noscript>
+</body>
+</html>

@@ -1,0 +1,168 @@
+
+==============================================================
+RakieSalon Release Playbook
+Version: 1.0
+Date: February 5, 2026
+==============================================================
+
+PURPOSE
+Create a clean, reproducible baseline release of:
+- backend
+- booking frontend build
+- site build
+So you can ALWAYS roll back safely.
+
+==============================================================
+1. ONE-TIME REPO CLEANUP
+==============================================================
+
+make sure unwanted files aren't included
+
+==============================================================
+2. PICK A VERSION NAME
+==============================================================
+
+Recommended format:
+rakiesalon-baseline-YYYY.MM.DD
+
+Example:
+rakiesalon-baseline-2026.02.05
+
+Use the SAME name for:
+- git tag
+- release folder
+- artifacts
+- release notes
+
+==============================================================
+3. CAPTURE BUILD ENVIRONMENT (CRITICAL)
+==============================================================
+
+node -v
+npm -v
+
+Save these values.
+
+Optional but recommended:
+Create .nvmrc with node version
+OR use Volta to pin node/npm
+
+==============================================================
+4. PRE-RELEASE CHECKLIST
+==============================================================
+
+git pull
+git status    (must be clean)
+
+Then in each app:
+
+npm ci
+npm run build
+
+Verify:
+- backend starts
+- booking works
+- admin works
+- site loads
+
+==============================================================
+5. CREATE BASELINE TAG
+==============================================================
+
+git add -A
+git commit -m "baseline snapshot"
+git tag -a rakiesalon-baseline-2026.02.05 -m "Known-good baseline"
+git push origin main
+git push origin rakiesalon-baseline-2026.02.05
+
+IMPORTANT:
+Tag ONLY a working commit.
+
+==============================================================
+6. BUILD + ARCHIVE ARTIFACTS
+==============================================================
+
+Create:
+
+releases/rakiesalon-baseline-2026.02.05/
+
+Frontend:
+
+cd apps/booking/frontend
+npm ci
+npm run build
+
+zip build -> booking-build.zip
+
+Backend source:
+
+zip backend -> backend-src.zip (exclude node_modules/.git)
+
+If site build exists:
+zip site build -> site-build.zip
+
+==============================================================
+7. CREATE MANIFEST.JSON
+==============================================================
+
+Example:
+
+{
+  "releaseName": "rakiesalon-baseline-2026.02.05",
+  "node": "v20.x",
+  "npm": "10.x",
+  "gitTag": "rakiesalon-baseline-2026.02.05",
+  "artifacts": [
+    "backend-src.zip",
+    "booking-build.zip",
+    "site-build.zip"
+  ]
+}
+
+==============================================================
+8. ROLLBACK USING GIT TAG
+==============================================================
+
+git fetch --tags
+git checkout rakiesalon-baseline-2026.02.05
+
+node -v   (must match recorded)
+npm -v
+
+npm ci
+npm run build
+
+redeploy
+
+==============================================================
+9. ROLLBACK USING ARTIFACTS (FASTEST)
+==============================================================
+
+Unzip:
+booking-build.zip -> replace deployed build
+backend-src.zip -> replace backend
+restart server
+
+==============================================================
+10. BEFORE BIG CHANGES
+==============================================================
+
+ALWAYS:
+- backup database
+- export important collections
+
+==============================================================
+11. COMMON MISTAKES
+==============================================================
+
+DO NOT:
+- commit node_modules
+- commit build folders
+- forget package-lock.json
+- tag broken builds
+- change Node version without noting it
+- use npm install instead of npm ci
+
+==============================================================
+END
+==============================================================

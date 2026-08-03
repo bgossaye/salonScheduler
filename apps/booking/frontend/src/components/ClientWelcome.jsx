@@ -16,6 +16,12 @@ export default function ClientWelcome({ client, onClientLoaded }) {
   const [requiresUpgrade, setRequiresUpgrade] = useState(false);
   const [showDefaultPinHint, setShowDefaultPinHint] = useState(false);
   const [probing, setProbing] = useState(false);
+  const [bookingStatus, setBookingStatus] = useState({
+    bookingAvailable: true,
+    currentNotices: [],
+    futureNotices: [],
+    promotions: [],
+  });
   const [intakeConfig, setIntakeConfig] = useState({
     verify: false,
     otpPurpose: 'signup',
@@ -27,6 +33,40 @@ export default function ClientWelcome({ client, onClientLoaded }) {
   const probeIdRef = useRef(0);
 
   const isValidPin = (v) => /^\d{4}$/.test(v);
+
+  const formatNoticeDate = (value) => {
+    if (!value) return '';
+    const date = new Date(`${value}T12:00:00`);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const formatNoticeRange = (notice) => {
+    if (!notice?.startDate) return '';
+    const start = formatNoticeDate(notice.startDate);
+    const end = formatNoticeDate(notice.endDate);
+    return !end || notice.startDate === notice.endDate ? start : `${start} – ${end}`;
+  };
+
+  const noticeStatusText = (notice, future = false) => {
+    const storeText = notice.storeClosed
+      ? (future ? 'Store will be closed' : 'Store is closed')
+      : (future ? 'Store will be open' : 'Store is open');
+    const onlineText = notice.onlineBookingOff
+      ? (future ? 'online booking will be unavailable' : 'online booking is unavailable')
+      : (future ? 'online booking will remain available' : 'online booking is available');
+    return `${storeText}; ${onlineText}.`;
+  };
+
+  const noticeActionText = (notice, future = false) => {
+    if (!notice.onlineBookingOff && notice.storeClosed) {
+      return future ? 'You may continue to book another date.' : 'You may continue to book another date.';
+    }
+    if (notice.onlineBookingOff) return 'Please call the salon.';
+    return '';
+  };
+
+  const supportPhoneDisplay = `(${SUPPORT_PHONE.slice(0, 3)}) ${SUPPORT_PHONE.slice(3, 6)}-${SUPPORT_PHONE.slice(6)}`;
 
   const AWAKE_KEY = 'serverAwake';
   const AWAKE_TS_KEY = 'serverAwakeTs';
@@ -98,16 +138,35 @@ export default function ClientWelcome({ client, onClientLoaded }) {
   };
 
   useEffect(() => {
-    const svc = new URLSearchParams(window.location.search).get('service');
+    const landingParams = new URLSearchParams(window.location.search);
+    const svc = landingParams.get('service');
     if (svc) sessionStorage.setItem('desiredServiceId', svc);
+
+    const promo = String(landingParams.get('promo') || '').trim().toUpperCase();
+    if (promo === 'NEWCLIENT10') {
+      localStorage.setItem('pendingWelcomeOfferCode', 'NEWCLIENT10');
+      localStorage.setItem('pendingWelcomeOfferSource', 'website_home_cta');
+    }
 
     const lastPhone = localStorage.getItem('lastPhone');
     if (lastPhone) setPhone(normalizePhone10(lastPhone));
     inputRef.current?.focus?.();
 
     (async () => {
-      if (isAwakeFresh()) return;
-      await wakeRender({ tag: 'client-welcome:init' });
+      if (!isAwakeFresh()) {
+        await wakeRender({ tag: 'client-welcome:init' });
+      }
+      try {
+        const { data } = await API.get('/booking-status');
+        setBookingStatus({
+          bookingAvailable: data?.bookingAvailable !== false,
+          currentNotices: Array.isArray(data?.currentNotices) ? data.currentNotices : [],
+          futureNotices: Array.isArray(data?.futureNotices) ? data.futureNotices : [],
+          promotions: Array.isArray(data?.promotions) ? data.promotions : [],
+        });
+      } catch (error) {
+        console.error('Unable to load booking notices:', error?.response?.data || error.message);
+      }
     })();
   }, []);
 
@@ -207,6 +266,11 @@ export default function ClientWelcome({ client, onClientLoaded }) {
         return;
       }
 
+      // The home-page offer is only for a newly created client. Do not leave a
+      // pending browser-side offer behind after an existing client is found.
+      localStorage.removeItem('pendingWelcomeOfferCode');
+      localStorage.removeItem('pendingWelcomeOfferSource');
+
       if (!pin) {
         toast.info('Enter your 4-digit PIN or tap Help to reset it by code.');
         setIsLoading(false);
@@ -265,6 +329,26 @@ export default function ClientWelcome({ client, onClientLoaded }) {
         <img src={logo} alt="Rakie Salon Logo" className="w-24 h-24 mb-4" />
       </a>
 
+      {bookingStatus.currentNotices.find((notice) => notice.onlineBookingOff) && (() => {
+        const notice = bookingStatus.currentNotices.find((item) => item.onlineBookingOff);
+        return (
+          <div
+            className="mb-3 w-full max-w-md rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-950 shadow-sm"
+            role="alert"
+          >
+            <div className="flex items-start gap-2">
+              <span className="leading-5" aria-hidden="true">⚠️</span>
+              <p className="min-w-0 leading-5">
+                <strong>Online booking is temporarily unavailable.</strong>{' '}
+                <a href={`tel:${SUPPORT_PHONE}`} className="font-semibold underline">
+                  Call {supportPhoneDisplay}
+                </a>
+              </p>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="bg-white shadow-md rounded p-6 w-full max-w-md">
         <h1 className="text-xl font-semibold mb-4 text-center">Welcome to Rakie Salon</h1>
 
@@ -314,10 +398,11 @@ export default function ClientWelcome({ client, onClientLoaded }) {
           </p>
         )}
 
+
         <button
           onClick={handleSubmit}
-          disabled={isLoading}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded"
+          disabled={isLoading || !bookingStatus.bookingAvailable}
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-2 rounded"
         >
           {isLoading ? (
             <div className="flex items-center justify-center gap-2">

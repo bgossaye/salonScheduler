@@ -68,6 +68,8 @@ export default function AdminServices() {
         slug: s.slug,
         category: s.category,
         price: priceNum,
+        startingPrice: s.startingPrice ?? null,
+        requiresChemicalPermission: !!s.requiresChemicalPermission,
         priceCents: Math.round(priceNum * 100),
         duration: s.duration,
         steps: s.steps?.map(st => ({ name: st.name, duration: st.duration })) || [],
@@ -122,8 +124,10 @@ export default function AdminServices() {
           <tr className="bg-gray-100">
             <th className="p-2 border">Name</th>
             <th className="p-2 border">Category</th>
-            <th className="p-2 border">Price</th>
+            <th className="p-2 border">Legacy/Rakeb Price</th>
+            <th className="p-2 border">Starting Price</th>
             <th className="p-2 border">Duration</th>
+            <th className="p-2 border">Flags</th>
             <th className="p-2 border">Steps</th>
             <th className="p-2 border">Add-ons</th>
             <th className="p-2 border">Actions</th>
@@ -135,7 +139,14 @@ export default function AdminServices() {
               <td className="p-2 border">{s.name}</td>
               <td className="p-2 border">{s.category}</td>
               <td className="p-2 border">${s.price}</td>
+              <td className="p-2 border">{s.startingPrice != null && s.startingPrice !== '' ? `$${s.startingPrice}` : 'Calculated by stylist'}</td>
               <td className="p-2 border">{s.duration} min</td>
+              <td className="p-2 border text-xs">
+                {s.requiresChemicalPermission && <span className="inline-block rounded bg-purple-50 px-2 py-1 text-purple-700 border border-purple-200">Chemical</span>}
+                {s.active === false && <span className="ml-1 inline-block rounded bg-gray-100 px-2 py-1 text-gray-600 border">Inactive</span>}
+                {s.isAddOn && <span className="ml-1 inline-block rounded bg-blue-50 px-2 py-1 text-blue-700 border border-blue-200">Add-on</span>}
+                {s.isAddOn && s.bookableAsSeparateOnline === false && <span className="ml-1 inline-block rounded bg-orange-50 px-2 py-1 text-orange-700 border border-orange-200">Add-on only</span>}
+              </td>
               <td className="p-2 border">
                 <ul className="list-disc list-inside text-sm">
                   {s.steps?.map((step, idx) => (

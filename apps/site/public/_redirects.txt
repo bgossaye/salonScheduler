@@ -1,0 +1,6 @@
+/admin           /booking/admin/login  301!
+/booking/admin   /booking/admin/login  301!
+
+# SPA fallbacks
+/booking/*       /booking/index.html   200
+/*               /index.html           200

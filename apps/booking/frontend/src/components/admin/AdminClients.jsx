@@ -177,7 +177,14 @@ const handleImportCSV = async (e) => {
 
       fetchClients();
     } catch (err) {
-      toast.error("Failed to add client.");
+      const existingClient = err?.response?.data?.existingClient;
+      if (err?.response?.status === 409 && existingClient?._id) {
+        toast.info('A client with that phone already exists. Opening the existing record instead.');
+        setNewClient({ firstName: '', lastName: '', phone: '', email: '' });
+        fetchClients();
+        return;
+      }
+      toast.error(err?.response?.data?.error || "Failed to add client.");
     }
   };
 

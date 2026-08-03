@@ -1,0 +1,29 @@
+{
+  "name": "@rakie/tokens",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./js": "./src/index.js",
+    "./css": "./src/index.css"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "npm-run-all": "^4.1.5",
+    "wait-on": "^8.0.4"
+  },
+  "scripts": {
+    "build": "node -e \"console.log('@rakie/tokens: nothing to build')\"",
+    "dev": " npm --workspace-root run stack",
+    "dev:site": " cross-env PORT=3000 BROWSER=none npm -w apps/site run start",
+    "dev:booking": " npx wait-on tcp:3000 && cross-env PORT=3001 BROWSER=none REACT_APP_API_BASE=http://localhost:5000 npm -w apps/booking/frontend run start",
+    "dev:api": " npx wait-on tcp:3000 && cross-env PORT=5000 npm -w apps/booking/backend run dev",
+    "open:site": " npx wait-on tcp:3000 && start \"\" http://localhost:3000",
+    "dev:all": " npx concurrently -k -p \"[{name}]\" -c magenta,green,blue,gray \"npm --workspaces=false run dev:site\" \"npm --workspaces=false run dev:booking\" \"npm --workspaces=false run dev:api\" \"npm --workspaces=false run open:site\"",
+    "stack": " npx concurrently -k -p \"[{name}]\" -c magenta,green,blue,gray \"cd apps/site"
+  }
+}

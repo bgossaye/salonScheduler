@@ -1,0 +1,47 @@
+/* Import shared CSS tokens (optional) */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+/* Utilities */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Curly script font helper */
+.font-curly {
+  font-family: 'Great Vibes', cursive;
+}
+
+/* Gentle scale pulse */
+@keyframes gentle-pulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2)); }
+  50%      { transform: scale(1.04); filter: drop-shadow(0 6px 10px rgba(0,0,0,0.15)); }
+}
+.gentle-pulse {
+  animation: gentle-pulse 1.9s ease-in-out infinite;
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(1turn); }
+}
+
+/* Soft shimmer highlight sweeping across letters */
+@keyframes highlight-sheen {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-gold {
+  background-image:
+    linear-gradient(90deg,
+      rgba(0,0,0,0) 0%,
+      rgba(255,255,255,0.25) 45%,
+      rgba(255,255,255,0.65) 50%,
+      rgba(255,255,255,0.25) 55%,
+      rgba(0,0,0,0) 100%);
+  background-size: 200% 100%;
+  -webkit-mask-image: linear-gradient(black, black); /* ensure clip works cross-browser */
+  animation: highlight-sheen 3.2s linear infinite;
+}

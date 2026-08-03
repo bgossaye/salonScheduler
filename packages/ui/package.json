@@ -1,0 +1,21 @@
+{
+  "name": "@rakie/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./Header": "./Header.js",
+    "./Footer": "./Footer.js"
+  },
+  "files": ["index.js", "Header.js", "Footer.js"],
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "dependencies": {
+    "@rakie/tokens": "file:../tokens"
+  }
+}

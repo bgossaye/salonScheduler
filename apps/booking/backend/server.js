@@ -1,0 +1,285 @@
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const app = express();
+const cron = require('node-cron');
+const sendSMS = require('./utils/sendSMS');
+const Appointment = require('./models/appointment');
+const Client = require('./models/client');
+const { installSystemErrorCapture } = require('./utils/systemErrorLogger');
+installSystemErrorCapture();
+const { ensureRakebWorkerAndMigrate } = require('./utils/workerPricing');
+const giftCardRoutes = require('./routes/admin/giftcard');
+const path = require('path'); 
+const helmet = require("helmet");
+const { googleReviewsHandler } = require('./routes/google'); 
+const REMINDER_CRON = '0 10 * * *';
+const REMINDER_TIMEZONE = 'America/New_York';
+cron.schedule(REMINDER_CRON, async () => {
+    const startedAt = new Date();
+    console.log(`[reminders] Daily reminder job started at ${startedAt.toLocaleString('en-US', { timeZone: REMINDER_TIMEZONE })} (${REMINDER_TIMEZONE})`);
+    await sendDailyReminders();
+}, { timezone: REMINDER_TIMEZONE });
+console.log(`[reminders] Daily reminder cron scheduled: ${REMINDER_CRON} (${REMINDER_TIMEZONE})`);
+const inbound = require('./routes/twilioInbound');
+
+async function sendDailyReminders() {
+    const easternToday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: REMINDER_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    const tomorrowEastern = new Date(`${easternToday}T12:00:00`);
+    tomorrowEastern.setDate(tomorrowEastern.getDate() + 1);
+    const yyyy = tomorrowEastern.getFullYear();
+    const mm = String(tomorrowEastern.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrowEastern.getDate()).padStart(2, '0');
+    const formattedDate = `${yyyy}-${mm}-${dd}`;
+
+    const appointments = await Appointment
+      .find({ date: formattedDate, status: 'booked' })
+      .populate('clientId serviceId')
+      .lean();
+
+    for (const appt of appointments) {
+        if (!appt.clientId) continue;
+        if (!appt.date || !appt.time) {
+          console.warn('[reminders] Appointment reminder missing stored date/time; sending generic fallback through sendSMS', {
+            apptId: String(appt._id || ''),
+            date: appt.date || '',
+            time: appt.time || '',
+          });
+        }
+        // Use DB template (NotificationSettings.reminder); no hard-coded message.
+        // Pass the stored DB date/time explicitly so reminder formatting never has to reconstruct it.
+        await sendSMS('reminder', appt, { date: appt.date, time: appt.time });
+    }
+}
+
+
+// at top
+mongoose.connect(process.env.MONGO_URI)
+  .then(async () => {
+    console.log('✅ MongoDB connected');
+    ensureRakebWorkerAndMigrate({ verbose: true }).catch(err => {
+      console.error('❌ Staff/worker migration failed:', err);
+    });
+  })
+  .catch(err => console.error('❌ MongoDB connection error:', err));
+
+// ✅ Middleware
+
+function toOriginArray(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean).map(String);
+
+  // Accept JSON array in env: ["http://localhost:3001","https://rakiesalon.com"]
+  if (typeof val === 'string' && val.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
+    } catch (_) { /* fall through */ }
+  }
+
+  // Comma/whitespace-separated string: a,b c
+  if (typeof val === 'string') {
+    return val
+      .split(/[,\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  // Object (e.g., {DEV:"http://...", PROD:"https://..."})
+  if (typeof val === 'object') {
+    return Object.values(val)
+      .flat()
+      .filter(Boolean)
+      .map(String);
+  }
+
+  // Fallback: single value
+  return [String(val)];
+}
+
+const allowedOrigins = toOriginArray(process.env.ALLOWED_ORIGINS || [
+  "https://rakiesalon.com",
+  "https://www.rakiesalon.com",
+  "http://localhost:3000",
+  "http://localhost:3001"
+]);
+const allowedOriginSet = new Set(allowedOrigins);
+
+// Handy local checks
+const isLocal = (o) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o || '');
+
+console.log('[CORS] allowedOrigins:', allowedOrigins);
+
+app.use(cors({
+  origin(origin, cb) {
+    // allow non-browser tools (curl/cron) with no Origin header
+    if (!origin) return cb(null, true);
+
+    // allow localhost always
+    if (isLocal(origin)) return cb(null, true);
+
+    // allow exact matches from env/default list
+    if (allowedOriginSet.has(origin)) return cb(null, true);
+
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true,
+  maxAge: 86400,
+}));
+
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
+
+app.use('/uploads', express.static('uploads'));
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
+
+// ─────────────────────────────────────────────────────────────
+// Lightweight health endpoint (NO DB check; safe for cron/wake)
+// Supports GET (fetch) and POST (sendBeacon)
+// ─────────────────────────────────────────────────────────────
+app.get('/api/deployment-version', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({
+    app: 'rakie-backend',
+    version: '2026-07-31-public-deals-v1',
+    publicRoutes: ['/api/promotions/active', '/api/booking-status'],
+  });
+});
+
+app.get('/api/healthz', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({ ok: true, ts: Date.now() });
+});
+
+app.post('/api/healthz', (req, res) => {
+  // sendBeacon uses POST; keep it ultra-light
+  return res.status(204).end();
+});
+
+// Compatibility shim for old monitors:
+app.get('/healthz', (req, res) => res.redirect(307, '/api/healthz'));
+
+// ─────────────────────────────────────────────────────────────
+// Cron wake (token-protected; NO DB; safe under repeated calls)
+// ─────────────────────────────────────────────────────────────
+app.get('/api/cron-wake', (req, res) => {
+  const token = String(req.query.token || '');
+  const expected = String(process.env.CRON_WAKE_TOKEN || '');
+
+  // If token is configured, require it
+  if (expected && token !== expected) {
+    return res.status(401).json({ ok: false });
+  }
+
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({ ok: true, ts: Date.now() });
+});
+
+
+// Vanity redirects
+app.get(['/admin', '/admin/', '/booking/admin', '/booking/admin/'], (req, res) => {
+  res.redirect(301, '/booking/admin/login');
+});
+
+// booking build is in ../frontend/build
+const bookingBuild = path.join(__dirname, '..', 'frontend', 'build');
+
+// site build is in ../../site/build
+const siteBuild = path.join(__dirname, '..', '..', 'site', 'build');
+
+app.get('/api/google-reviews', googleReviewsHandler); 
+
+// ✅ Public Routes
+const clientRoutes =      require('./routes/client/clients');
+const appointmentRoutes = require('./routes/client/appointments');
+const serviceRoutes =     require('./routes/client/services');
+const availabilityRoutes = require('./routes/shared/availability');
+const publicStoreHours = require('./routes/shared/storehours');
+const publicBookingStatus = require('./routes/shared/bookingstatus');
+const schedulingRoutes = require('./routes/schedulingroutes');
+const promotionRoutes = require('./routes/client/promotions');
+const publicWorkers = require('./routes/client/workers');
+
+// Use the route
+app.use('/api/clients', clientRoutes);
+app.use('/api/appointments', appointmentRoutes);
+app.use('/api/services', serviceRoutes);
+app.use('/api/availability', availabilityRoutes);
+app.use('/api/store-hours', publicStoreHours);
+app.use('/api/booking-status', publicBookingStatus);
+app.use('/api/schedule', schedulingRoutes);
+app.use('/api/promotions', promotionRoutes);
+// Public compatibility aliases for website clients deployed against older paths.
+app.use('/api/public/promotions', promotionRoutes);
+app.use('/api/client/promotions', promotionRoutes);
+app.use('/api/workers', publicWorkers);
+
+
+// ✅ Admin Routes
+const adminAppointments = require('./routes/admin/appointments');
+const adminClients = require('./routes/admin/clients');
+const adminServices = require('./routes/admin/services');
+const adminStoreHours = require('./routes/admin/storehours');
+const adminAuth = require('./routes/admin/auth');
+const adminReports = require('./routes/admin/reports');
+const adminExport = require('./routes/admin/export');
+const notificationtemplate = require('./routes/admin/notificationtemplate');
+const adminRuntimeSettings = require('./routes/admin/runtimesettings');
+const adminPromotionDeals = require('./routes/admin/promotiondeals');
+const adminWorkers = require('./routes/admin/workers');
+const adminDashboard = require('./routes/admin/dashboard');
+const adminSystemErrors = require('./routes/admin/systemerrors');
+
+app.use('/api/admin/appointments', adminAppointments);
+app.use('/api/admin/clients', adminClients);
+app.use('/api/admin/services', adminServices);
+app.use('/api/admin/store-hours', adminStoreHours);
+app.use('/api/admin/login', adminAuth);
+app.use('/api/admin/reports', adminReports);
+app.use('/api/admin/export', adminExport);
+app.use('/api/twilio', require('./routes/external/twilio'));
+app.use('/api/admin/status-logs', require('./routes/admin/statuslogs'));
+app.use('/api/giftcards', giftCardRoutes);
+app.use('/api/admin/notificationsettings', notificationtemplate);
+app.use('/api/admin/runtime-settings', adminRuntimeSettings);
+app.use('/api/admin/promotion-deals', adminPromotionDeals);
+app.use('/api/admin/workers', adminWorkers);
+app.use('/api/admin/dashboard', adminDashboard);
+app.use('/api/admin/notifications', require('./routes/admin/notifications'));
+app.use('/api/admin/reminders', require('./routes/admin/reminders'));
+app.use('/api/admin/system-errors', adminSystemErrors);
+app.use('/api/sms', inbound);
+
+// Serve booking at /booking
+ app.use('/booking', express.static(bookingBuild, { index: false }));
+ app.use(express.static(siteBuild, { index: false }));
+
+app.get('/booking/*', (_, res) => res.sendFile(path.join(bookingBuild, 'index.html')));
+app.get('*', (_, res) => res.sendFile(path.join(siteBuild, 'index.html')));
+
+// ✅ Server start
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+ /* 
+setTimeout(async () => {
+  try {
+    await sendDailyReminders();
+  } catch (err) {
+    console.error('❌ Failed to run daily reminders:', err);
+  }
+}, 5000);
+*/
+});
