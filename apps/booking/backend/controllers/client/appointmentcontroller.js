@@ -350,9 +350,9 @@ exports.createAppointment = async (req, res) => {
 
     const payload = await preparePublicAppointmentPayload(await applyPublicStylistBookingRules({
       ...allowedPublicUpdate(req.body || {}),
-      // Client self-bookings are confirmed/booked when the selected slot is available.
-      // Stylist-to-stylist pending logic only applies to staff booking flows.
-      status: 'booked',
+      // Every client-created online appointment starts as pending so salon staff
+      // can verify the requested service, stylist, date, and time before confirming.
+      status: 'pending',
     }));
 
     const [created] = await saveAppointmentsWithIntegrity([payload], { publicMessage: true });
@@ -438,7 +438,9 @@ exports.createAppointmentBatch = async (req, res) => {
     for (let i = 0; i < rows.length; i += 1) {
       const payload = await preparePublicAppointmentPayload(await applyPublicStylistBookingRules({
         ...allowedPublicUpdate(rows[i] || {}),
-        status: 'booked',
+        // Multi-service online requests follow the same approval workflow as
+        // single-service online requests: staff must confirm them in Admin.
+        status: 'pending',
         bookingFlags: Array.from(new Set([
           ...((rows[i]?.bookingFlags || rows[i]?.flags || []).filter(Boolean)),
           'online_multi_service_visit',

@@ -176,7 +176,11 @@ async function applySeamlessStylistBookingRules(req, rawPayload = {}) {
 
   const bookingAnotherStylist = !!bookerWorkerId && !!selectedWorkerId && selectedWorkerId !== bookerWorkerId;
   const bookingOwnSchedule = !!bookerWorkerId && !!selectedWorkerId && selectedWorkerId === bookerWorkerId;
-  const nonAdminStylistBookingAnotherStylist = bookingAnotherStylist && !schedulingAuthority;
+  // A stylist placing an appointment on another stylist's calendar always
+  // creates a pending request. Owner/admin/manager/front-desk bookings remain
+  // booked immediately, even when they select a different stylist.
+  const stylistBookingAnotherStylist = bookingAnotherStylist && roleKey(req) === 'stylist';
+  const nonAdminStylistBookingAnotherStylist = stylistBookingAnotherStylist;
   const oneTimeNonDefaultStylist = !!defaultStylistId && !!selectedWorkerId && selectedWorkerId !== defaultStylistId;
   const nonAdminNonOwnerBookedSelf = !!defaultStylistId
     && oneTimeNonDefaultStylist
@@ -199,7 +203,10 @@ async function applySeamlessStylistBookingRules(req, rawPayload = {}) {
     ...rawPayload,
     workerId: selectedWorkerId || rawPayload.workerId,
     workerTierKey: (selectedWorkerId === defaultStylistId ? client.assignedStylistId?.tierKey : rawPayload.workerTierKey) || rawPayload.workerTierKey || '',
-    status: nonAdminStylistBookingAnotherStylist ? 'pending' : (rawPayload.status || 'booked'),
+    // Creation status is determined by who is booking, not by a submitted
+    // status value: salon-authorized staff bookings are booked immediately;
+    // stylist-to-stylist bookings require confirmation.
+    status: nonAdminStylistBookingAnotherStylist ? 'pending' : 'booked',
     bookingFlags: flags,
     clientDefaultStylistAtBooking: defaultStylistId || null,
     bookedByAdminId: req.admin?.id || req.admin?._id || null,

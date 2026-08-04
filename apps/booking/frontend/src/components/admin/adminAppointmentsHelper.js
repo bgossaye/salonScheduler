@@ -30,12 +30,32 @@ export function getNextOpenDate(startDateStr, weeksAhead, storeHours) {
 }
 
 /**
- * Duplicate appointment with updated date
+ * Build a clean payload for a NEW appointment based on a completed one.
+ * Appointment rows are populated for display, so references must be reduced
+ * back to IDs and completed/history metadata must not be copied into POST.
  */
 export function buildRebookedAppointment(originalAppointment, newDate) {
-  const copy = { ...originalAppointment };
-  delete copy._id;
-  copy.date = newDate;
-  copy.status = 'booked';
-  return copy;
+  const idOf = (value) => value?._id || value || '';
+
+  return {
+    clientId: idOf(originalAppointment?.clientId),
+    serviceId: idOf(originalAppointment?.serviceId),
+    service: originalAppointment?.serviceId?.name || originalAppointment?.service || '',
+    workerId: idOf(originalAppointment?.workerId) || null,
+    workerTierKey:
+      originalAppointment?.workerId?.tierKey ||
+      originalAppointment?.workerTierKey ||
+      originalAppointment?.priceSnapshot?.workerTierKey ||
+      '',
+    workerName:
+      originalAppointment?.workerId?.displayName ||
+      originalAppointment?.workerName ||
+      originalAppointment?.priceSnapshot?.workerName ||
+      '',
+    date: newDate,
+    time: String(originalAppointment?.time || '').slice(0, 5),
+    duration: Number(originalAppointment?.duration) || 60,
+    status: 'booked',
+    addOns: (originalAppointment?.addOns || []).map(idOf).filter(Boolean),
+  };
 }

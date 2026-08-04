@@ -772,7 +772,7 @@ const handleSubmit = async () => {
       time: current.time,
       duration,
       addOns: current.addOnIds,
-      status: 'booked',
+      status: isEdit ? (editingAppointment?.status || 'pending') : 'pending',
       couponCode: appliedCouponCode,
     };
 

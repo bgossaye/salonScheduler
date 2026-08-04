@@ -678,78 +678,137 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
               </td>
               <td className="p-2 border">{renderAddOns(appt.addOns)}</td>
               <td className="border p-0">
-                <div className="flex min-w-[176px] items-center justify-center gap-1">
-                  <button
-                    type="button"
-                    title="Mark completed"
-                    aria-label="Mark appointment completed"
-                    disabled={appt.status === 'completed'}
-                    onClick={() => handleComplete(appt)}
-                    className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
-                      appt.status === 'completed'
-                        ? 'border-green-800 bg-green-700 text-white'
-                        : 'border-green-600 bg-green-500 text-white hover:bg-green-600'
-                    }`}
-                  >
-                    CMP
-                  </button>
+                {isPending ? (
+                  <div className="flex min-w-[176px] items-center justify-center gap-1">
+                    <button
+                      type="button"
+                      title="Confirm appointment"
+                      aria-label="Confirm pending appointment"
+                      onClick={() => handleUpdate(appt._id, { status: 'booked' })}
+                      className="h-11 w-[52px] border-2 border-green-700 bg-green-600 p-0 text-[10px] font-extrabold tracking-wide text-white shadow-sm transition active:scale-95 hover:bg-green-700 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)]"
+                    >
+                      CNF
+                    </button>
 
-                  <button
-                    type="button"
-                    title="Mark canceled"
-                    aria-label="Mark appointment canceled"
-                    disabled={appt.status === 'canceled'}
-                    onClick={() => handleCancel(appt._id)}
-                    className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
-                      appt.status === 'canceled'
-                        ? 'border-yellow-700 bg-yellow-500 text-gray-900'
-                        : 'border-yellow-500 bg-yellow-300 text-gray-900 hover:bg-yellow-400'
-                    }`}
-                  >
-                    CAN
-                  </button>
+                    <button
+                      type="button"
+                      title="Cancel appointment"
+                      aria-label="Cancel pending appointment"
+                      onClick={() => handleCancel(appt._id)}
+                      className="h-11 w-[52px] border-2 border-yellow-600 bg-yellow-400 p-0 text-[10px] font-extrabold tracking-wide text-gray-900 shadow-sm transition active:scale-95 hover:bg-yellow-500 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)]"
+                    >
+                      CAN
+                    </button>
 
-                  <button
-                    type="button"
-                    title="Mark no-show"
-                    aria-label="Mark appointment no-show"
-                    disabled={appt.status === 'noshow'}
-                    onClick={() => handleUpdate(appt._id, { status: 'noshow' })}
-                    className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
-                      appt.status === 'noshow'
-                        ? 'border-red-900 bg-red-700 text-white'
-                        : 'border-red-700 bg-red-600 text-white hover:bg-red-700'
-                    }`}
-                  >
-                    NSH
-                  </button>
-
-                  <select
-                    className="h-7 w-7 cursor-pointer appearance-none rounded-sm border border-blue-800 bg-blue-600 p-0 text-center text-[11px] font-black leading-none text-white shadow-sm hover:bg-blue-700"
-                    value=""
-                    aria-label="More appointment actions"
-                    title="More actions"
-                    onChange={(e) => {
-                      const action = e.target.value;
-                      if (action === 'booked') handleUpdate(appt._id, { status: 'booked' });
-                      else if (action === 'pending') handleUpdate(appt._id, { status: 'pending' });
-                      else if (action === 'edit') {
+                    <button
+                      type="button"
+                      title="Edit appointment"
+                      aria-label="Edit pending appointment"
+                      onClick={() => {
                         setSelectedAppt(appt);
                         setModalOpen(true);
-                      } else if (action === 'delete') {
-                        if (window.confirm('Are you sure you want to delete this appointment?')) {
-                          handleDelete(appt._id);
+                      }}
+                      className="h-11 w-[52px] border-2 border-slate-600 bg-slate-500 p-0 text-[10px] font-extrabold tracking-wide text-white shadow-sm transition active:scale-95 hover:bg-slate-600 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)]"
+                    >
+                      EDT
+                    </button>
+
+                    <select
+                      className="h-7 w-7 cursor-pointer appearance-none rounded-sm border border-blue-800 bg-blue-600 p-0 text-center text-[11px] font-black leading-none text-white shadow-sm hover:bg-blue-700"
+                      value=""
+                      aria-label="More pending appointment actions"
+                      title="More actions"
+                      onChange={(e) => {
+                        const action = e.target.value;
+                        if (action === 'completed') handleComplete(appt);
+                        else if (action === 'noshow') handleUpdate(appt._id, { status: 'noshow' });
+                        else if (action === 'delete') {
+                          if (window.confirm('Are you sure you want to delete this appointment?')) {
+                            handleDelete(appt._id);
+                          }
                         }
-                      }
-                    }}
-                  >
-                    <option value="">▼</option>
-                    <option value="booked">📅 Mark booked</option>
-                    <option value="pending">⏳ Mark pending</option>
-                    <option value="edit">✏️ Edit appointment</option>
-                    <option value="delete">🗑 Delete appointment</option>
-                  </select>
-                </div>
+                      }}
+                    >
+                      <option value="">▼</option>
+                      <option value="completed">✔ Mark completed</option>
+                      <option value="noshow">🚫 Mark no-show</option>
+                      <option value="delete">🗑 Delete appointment</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex min-w-[176px] items-center justify-center gap-1">
+                    <button
+                      type="button"
+                      title="Mark completed"
+                      aria-label="Mark appointment completed"
+                      disabled={appt.status === 'completed'}
+                      onClick={() => handleComplete(appt)}
+                      className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
+                        appt.status === 'completed'
+                          ? 'border-green-800 bg-green-700 text-white'
+                          : 'border-green-600 bg-green-500 text-white hover:bg-green-600'
+                      }`}
+                    >
+                      CMP
+                    </button>
+
+                    <button
+                      type="button"
+                      title="Mark canceled"
+                      aria-label="Mark appointment canceled"
+                      disabled={appt.status === 'canceled'}
+                      onClick={() => handleCancel(appt._id)}
+                      className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
+                        appt.status === 'canceled'
+                          ? 'border-yellow-700 bg-yellow-500 text-gray-900'
+                          : 'border-yellow-500 bg-yellow-300 text-gray-900 hover:bg-yellow-400'
+                      }`}
+                    >
+                      CAN
+                    </button>
+
+                    <button
+                      type="button"
+                      title="Mark no-show"
+                      aria-label="Mark appointment no-show"
+                      disabled={appt.status === 'noshow'}
+                      onClick={() => handleUpdate(appt._id, { status: 'noshow' })}
+                      className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
+                        appt.status === 'noshow'
+                          ? 'border-red-900 bg-red-700 text-white'
+                          : 'border-red-700 bg-red-600 text-white hover:bg-red-700'
+                      }`}
+                    >
+                      NSH
+                    </button>
+
+                    <select
+                      className="h-7 w-7 cursor-pointer appearance-none rounded-sm border border-blue-800 bg-blue-600 p-0 text-center text-[11px] font-black leading-none text-white shadow-sm hover:bg-blue-700"
+                      value=""
+                      aria-label="More appointment actions"
+                      title="More actions"
+                      onChange={(e) => {
+                        const action = e.target.value;
+                        if (action === 'booked') handleUpdate(appt._id, { status: 'booked' });
+                        else if (action === 'pending') handleUpdate(appt._id, { status: 'pending' });
+                        else if (action === 'edit') {
+                          setSelectedAppt(appt);
+                          setModalOpen(true);
+                        } else if (action === 'delete') {
+                          if (window.confirm('Are you sure you want to delete this appointment?')) {
+                            handleDelete(appt._id);
+                          }
+                        }
+                      }}
+                    >
+                      <option value="">▼</option>
+                      <option value="booked">📅 Mark booked</option>
+                      <option value="pending">⏳ Mark pending</option>
+                      <option value="edit">✏️ Edit appointment</option>
+                      <option value="delete">🗑 Delete appointment</option>
+                    </select>
+                  </div>
+                )}
               </td>
             </tr>
 ); 
@@ -767,11 +826,16 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
                           <button
                               className="bg-green-600 text-white px-4 py-2 rounded"
                               onClick={async () => {
-                                  const rebooked = buildRebookedAppointment(rebookPrompt.appt, rebookPrompt.nextDate);
-                                  await API.post('/admin/appointments', rebooked);
-                                  toast.success("Rebooked for next visit.");
-                                  setRebookPrompt({ visible: false, appt: null, nextDate: null });
-                                  fetchAppointments();
+                                  try {
+                                      const rebooked = buildRebookedAppointment(rebookPrompt.appt, rebookPrompt.nextDate);
+                                      await API.post('/admin/appointments', rebooked);
+                                      toast.success("Rebooked for next visit.");
+                                      setRebookPrompt({ visible: false, appt: null, nextDate: null });
+                                      await fetchAppointments();
+                                  } catch (err) {
+                                      console.error('Rebook failed:', err);
+                                      toast.error(err?.response?.data?.error || 'Failed to rebook appointment.');
+                                  }
                               }}
                           >
                               Yes
