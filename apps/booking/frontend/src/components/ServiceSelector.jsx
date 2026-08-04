@@ -80,6 +80,22 @@ function relationshipStylistIdFor(client) {
   );
 }
 
+function clientStartingPrice(service) {
+  const value = Number(service?.pricingSummary?.minPrice);
+  return Number.isFinite(value) ? `$${value.toFixed(value % 1 === 0 ? 0 : 2)}` : null;
+}
+
+function clientPriceMessage(service) {
+  const startingPrice = clientStartingPrice(service);
+  const consultationText = service?.requiresConsultation
+    ? ' Consultation is required before final pricing is confirmed.'
+    : ' Consultation may be required before final pricing is confirmed.';
+
+  return startingPrice
+    ? `Starting from ${startingPrice}.${consultationText} Final pricing may vary based on hair length, density, condition, product needs, service complexity, and time required.`
+    : `Starting price requires consultation.${consultationText} Final pricing may vary based on hair length, density, condition, product needs, service complexity, and time required.`;
+}
+
 export default function ServiceSelector({ client, onSignOut }) {
   const [categories, setCategories] = useState([]);
   const [services, setServices] = useState([]);
@@ -111,6 +127,7 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [bookingSettings, setBookingSettings] = useState({ maxOnlineServicesPerVisit: 2, limitMessage: 'For more than 2 services, please call Rakie Salon so we can allocate enough time for your visit.' });
   const [separateServiceCount, setSeparateServiceCount] = useState(() => readOnlineBookingCount());
   const [bookingCompleteNotice, setBookingCompleteNotice] = useState(null);
+  const [openPriceServiceId, setOpenPriceServiceId] = useState(null);
   const [bookingStatus, setBookingStatus] = useState({ currentNotices: [], futureNotices: [], promotions: [], storeStatus: null });
   const getEditingId = (apt) => apt?._id || apt?.id || apt?.appointmentId || null;
 
@@ -511,13 +528,13 @@ useEffect(() => {
     if (shouldShowClientPromotion && specialDeal && promotionConfig.warnWrongDay) {
       if (previousDate && !doesDateQualifyForDeal(previousDate, specialDeal)) {
         toast.warning(
-          `This service has a promotion, but ${getDealAppliesOnlyText(specialDeal)} Regular price will be applied for the selected date.`
+          `This service has a promotion, but ${getDealAppliesOnlyText(specialDeal)} The discount will not apply to the selected date; final pricing will be confirmed by the salon.`
         );
       } else if (previousDate && doesDateQualifyForDeal(previousDate, specialDeal)) {
         toast.success(getDealQualifiedText(specialDeal));
       } else {
         toast.info(
-          `This service has a promotion. ${getDealAppliesOnlyText(specialDeal)} Other days are regular price.`
+          `This service has a promotion. ${getDealAppliesOnlyText(specialDeal)} The discount is applied to the final eligible service total after salon pricing is confirmed.`
         );
       }
     }
@@ -723,7 +740,7 @@ const handleSubmit = async () => {
   const appliedCouponCode = enteredCouponCode || (couponResult?.valid ? couponResult.code : '');
 
   if (shouldShowClientPromotion && promotionConfig.warnWrongDay && !appliedCouponCode && submitSpecialDeal && !doesDateQualifyForDeal(current.date, submitSpecialDeal)) {
-    const warning = `Regular price will be applied because ${getDealAppliesOnlyText(submitSpecialDeal)}`;
+    const warning = `The promotion will not apply because ${getDealAppliesOnlyText(submitSpecialDeal)} Final pricing will be confirmed by the salon.`;
     toast.warning(warning);
 
     const continueBooking = window.confirm(
@@ -918,7 +935,7 @@ const storeDay = storeHours.find(h => h.day.toLowerCase() === selectedDay.toLowe
       toast.success(getDealQualifiedText(selectedDealForDate));
     } else {
       toast.warning(
-        `Regular price will be applied for this date. ${getDealAppliesOnlyText(selectedDealForDate)}`
+        `The promotion will not apply for this date. ${getDealAppliesOnlyText(selectedDealForDate)} Final pricing will be confirmed by the salon.`
       );
     }
   }
@@ -1079,8 +1096,8 @@ return (
           {selectedDate
             ? selectedDateQualifiesForSpecial
               ? getDealQualifiedText(selectedSpecialDeal)
-              : `Regular price will be applied for this date. ${getDealAppliesOnlyText(selectedSpecialDeal)}`
-            : `This is a promotion service. Choose an eligible day to use the deal. ${getDealAppliesOnlyText(selectedSpecialDeal)} Other days are regular price.`}
+              : `The promotion will not apply for this date. ${getDealAppliesOnlyText(selectedSpecialDeal)} Final pricing will be confirmed by the salon.`
+            : `This service has a promotion. Choose an eligible day to use it. ${getDealAppliesOnlyText(selectedSpecialDeal)} The discount is calculated from the final eligible service total.`}
         </div>
       )}
 
@@ -1262,32 +1279,72 @@ return (
           {services.filter(s => s.category === selectedCategory).map(service => {
             const specialDeal = shouldShowClientPromotion ? getSpecialDealForService(service, promotionConfig) : null;
             const isSelected = selectedService?._id === service._id;
+            const priceOpen = openPriceServiceId === service._id;
             return (
-              <button
+              <div
                 key={service._id}
-                className={`px-2 py-1 text-sm rounded whitespace-nowrap text-left ${
-                  isSelected
-                    ? 'bg-blue-600 text-white'
-                    : specialDeal
-                      ? 'bg-amber-50 border border-amber-300 text-gray-900'
-                      : 'bg-gray-100'
-                }`}
-                onClick={() => handleServiceClick(service)}
+                className="relative flex items-stretch gap-1"
+                onMouseLeave={() => setOpenPriceServiceId((current) => current === service._id ? null : current)}
               >
-                <span className="block">{service.name}</span>
-                <span className="block text-[11px] opacity-80">
-                  {service.pricingSummary?.label || 'Price by stylist'}{service.isAddOn ? ' · add-on or separate service' : ''}
-                </span>
-                {specialDeal && (
-                  <span
-                    className={`mt-1 inline-block rounded-full px-2 py-[1px] text-[10px] font-semibold uppercase tracking-wide ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
-                    }`}
+                <button
+                  type="button"
+                  className={`min-w-0 flex-1 px-2 py-1 text-sm rounded whitespace-nowrap text-left ${
+                    isSelected
+                      ? 'bg-blue-600 text-white'
+                      : specialDeal
+                        ? 'bg-amber-50 border border-amber-300 text-gray-900'
+                        : 'bg-gray-100'
+                  }`}
+                  onClick={() => handleServiceClick(service)}
+                >
+                  <span className="block">{service.name}</span>
+                  {service.isAddOn && (
+                    <span className="block text-[11px] opacity-80">Add-on or separate service</span>
+                  )}
+                  {specialDeal && (
+                    <span
+                      className={`mt-1 inline-block rounded-full px-2 py-[1px] text-[10px] font-semibold uppercase tracking-wide ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {specialDeal.shortLabel}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Pricing information for ${service.name}`}
+                  aria-expanded={priceOpen}
+                  title={clientPriceMessage(service)}
+                  onMouseEnter={() => setOpenPriceServiceId(service._id)}
+                  onFocus={() => setOpenPriceServiceId(service._id)}
+                  onBlur={() => setOpenPriceServiceId(null)}
+                  onClick={() => setOpenPriceServiceId((current) => current === service._id ? null : service._id)}
+                  className={`flex w-9 shrink-0 items-center justify-center rounded border text-base font-bold ${
+                    isSelected
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                  }`}
+                >
+                  $
+                </button>
+                {priceOpen && (
+                  <div
+                    role="tooltip"
+                    className="absolute right-0 top-full z-30 mt-1 w-72 max-w-[80vw] rounded-lg border border-emerald-200 bg-white p-3 text-left text-xs text-gray-700 shadow-xl whitespace-normal"
                   >
-                    {specialDeal.shortLabel}
-                  </span>
+                    <div className="font-semibold text-emerald-800">
+                      {clientStartingPrice(service) ? `Starting from ${clientStartingPrice(service)}` : 'Starting price requires consultation'}
+                    </div>
+                    <div className="mt-1">
+                      Final pricing may vary based on hair length, density, condition, product needs, service complexity, and time required.
+                    </div>
+                    <div className="mt-1 font-medium">
+                      {service.requiresConsultation ? 'Consultation is required.' : 'Consultation may be required.'} The salon will confirm final pricing.
+                    </div>
+                  </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
@@ -1470,7 +1527,8 @@ dayCellClassNames={({ date }) => {
         </div>
         {couponResult?.valid && (
           <div className="text-sm rounded border border-green-200 bg-green-50 text-green-700 px-3 py-2">
-            Coupon applied: {couponResult.deal?.title || couponResult.code} ({getDealDiscountLabel(couponResult.deal)})
+            <div className="font-semibold">Coupon applied: {couponResult.deal?.title || couponResult.code} ({getDealDiscountLabel(couponResult.deal)})</div>
+            <div className="mt-1 text-xs">The discount will be taken from the final eligible service total after salon pricing is confirmed.</div>
           </div>
         )}
         {couponResult && couponResult.valid === false && (

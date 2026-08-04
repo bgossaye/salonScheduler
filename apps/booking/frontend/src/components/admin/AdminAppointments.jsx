@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { wakeRender } from "../../wakebooking";
 import API from '../../api';
 import { formatDate, formatTime } from '../../utils/formatHelper';
@@ -42,6 +42,21 @@ const money = (value) => {
   return Number.isFinite(number) ? `$${number.toFixed(2)}` : null;
 };
 
+const getAppointmentEnd = (appt) => {
+  const date = String(appt?.date || '').slice(0, 10);
+  const time = String(appt?.time || '00:00').slice(0, 5);
+  const start = new Date(`${date}T${time}:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const duration = Math.max(0, Number(appt?.duration || 60));
+  return new Date(start.getTime() + duration * 60000);
+};
+
+const isOverdueBookedAppointment = (appt, now = new Date()) => {
+  if (String(appt?.status || '').toLowerCase() !== 'booked') return false;
+  const end = getAppointmentEnd(appt);
+  return !!end && now > end;
+};
+
 const getAppointmentPriceDetails = (appt) => {
   const snapshot = appt?.priceSnapshot || {};
   const originalNumber = Number(snapshot.servicePrice || 0) + Number(snapshot.addOnPrice || 0);
@@ -72,6 +87,9 @@ export default function AdminAppointments() {
   const [search] = useState('');
   const [rebookPrompt, setRebookPrompt] = useState({ visible: false, appt: null, nextDate: null });
   const [statusTouched, setStatusTouched] = useState(false);
+  const [overdueQueue, setOverdueQueue] = useState([]);
+  const [resolvingOverdue, setResolvingOverdue] = useState(false);
+  const overdueInitializedRef = useRef(false);
   const { promotionConfig } = usePromotionConfig();
   const shouldShowWorkerPromotion = promotionConfig.enabled && promotionConfig.showWorkerBadges;
   const adminUser = getAdminUser();
@@ -94,11 +112,17 @@ const fetchAppointments = useCallback(async () => {
         API.get('/admin/appointments', { params: { ...filters, status: 'booked' } }),
         API.get('/admin/appointments', { params: { ...filters, status: 'pending' } }),
       ]);
-      const merged = [...bookedRes.data, ...pendingRes.data];
-      setAppointments(sortAppointments(merged));
+      const merged = sortAppointments([...bookedRes.data, ...pendingRes.data]);
+      setAppointments(merged);
+
+      if (!overdueInitializedRef.current) {
+        overdueInitializedRef.current = true;
+        setOverdueQueue(merged.filter((appt) => isOverdueBookedAppointment(appt)));
+      }
     } else {
       // After user touches the Status filter: keep your normal behavior
-      const { data } = await API.get('/admin/appointments', { params: filters });
+      const requestParams = filters.status === 'archived' ? { ...filters, status: undefined, archived: true } : filters;
+      const { data } = await API.get('/admin/appointments', { params: requestParams });
       setAppointments(sortAppointments(data));
     }
   } catch (err) {
@@ -153,6 +177,7 @@ const filteredAppointments = appointments
       return appt.status === 'booked' || appt.status === 'pending';
     }
     // Normal behavior after user changes the Status filter
+    if (filters.status === 'archived') return appt.archived === true;
     if (filters.status === 'all') return true;
     return appt.status === filters.status;
   })
@@ -223,21 +248,126 @@ const handleSave = async (form) => {
                 if (nextDate) {
                     // show prompt and wait for user's choice
                     setRebookPrompt({ visible: true, appt, nextDate });
-                    return;
+                    return true;
                 }
             }
 
             toast.success("Appointment marked as completed");
             fetchAppointments();
+            return true;
         } catch (err) {
             toast.error("Failed to complete appointment");
             console.error(err);
+            return false;
         }
+    };
+
+    const resolveOverdueAppointment = async (status) => {
+      const appt = overdueQueue[0];
+      if (!appt || resolvingOverdue) return;
+
+      setResolvingOverdue(true);
+      try {
+        let succeeded = true;
+
+        if (status === 'completed') {
+          succeeded = await handleComplete(appt);
+        } else {
+          await API.patch(`/admin/appointments/${appt._id}`, { status });
+          toast.success(
+            status === 'noshow'
+              ? 'Appointment marked as no-show'
+              : 'Appointment marked as canceled'
+          );
+          await fetchAppointments();
+        }
+
+        if (succeeded !== false) {
+          setOverdueQueue((current) => current.filter((item) => item._id !== appt._id));
+        }
+      } catch (err) {
+        console.error('Failed to resolve overdue appointment', err);
+        toast.error('Failed to update the overdue appointment');
+      } finally {
+        setResolvingOverdue(false);
+      }
     };
 
   return (
     <div className="p-4">
       <h2 className="text-xl font-bold mb-4">Appointments</h2>
+
+      {overdueQueue.length > 0 && !rebookPrompt.visible && !modalOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black bg-opacity-60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="overdue-appointment-title"
+        >
+          <div className="w-full max-w-lg rounded-lg border-4 border-red-500 bg-white p-6 shadow-2xl">
+            <div className="mb-4 rounded bg-red-100 px-4 py-3 text-red-900">
+              <h3 id="overdue-appointment-title" className="text-xl font-bold">
+                Past appointment requires action
+              </h3>
+              <p className="mt-1 text-sm">
+                This appointment has already ended but is still marked Booked. Choose its final status before continuing.
+              </p>
+            </div>
+
+            {(() => {
+              const appt = overdueQueue[0];
+              const remaining = overdueQueue.length;
+              return (
+                <>
+                  <div className="space-y-2 rounded border bg-gray-50 p-4 text-sm">
+                    <p><strong>Client:</strong> {[appt.clientId?.firstName, appt.clientId?.lastName].filter(Boolean).join(' ') || 'N/A'}</p>
+                    <p><strong>Service:</strong> {getAppointmentServiceName(appt)}</p>
+                    <p><strong>Stylist:</strong> {getWorkerName(appt)}</p>
+                    <p><strong>Date:</strong> {formatDate(appt.date)}</p>
+                    <p><strong>Time:</strong> {formatTime(appt.time)}{appt.duration ? ` · ${appt.duration} min` : ''}</p>
+                    {remaining > 1 && (
+                      <p className="font-semibold text-red-700">
+                        {remaining} unresolved past appointments remain.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    <button
+                      type="button"
+                      disabled={resolvingOverdue}
+                      onClick={() => resolveOverdueAppointment('completed')}
+                      className="rounded bg-green-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      ✔ Complete
+                    </button>
+                    <button
+                      type="button"
+                      disabled={resolvingOverdue}
+                      onClick={() => resolveOverdueAppointment('noshow')}
+                      className="rounded bg-orange-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      🚫 No-show
+                    </button>
+                    <button
+                      type="button"
+                      disabled={resolvingOverdue}
+                      onClick={() => resolveOverdueAppointment('canceled')}
+                      className="rounded bg-red-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      ✖ Cancel
+                    </button>
+                  </div>
+
+                  <p className="mt-4 text-center text-xs text-gray-500">
+                    This window cannot be dismissed until each overdue appointment is resolved.
+                  </p>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       <div className="mb-4 flex gap-2 flex-wrap">
         <input
@@ -256,6 +386,7 @@ const handleSave = async (form) => {
 	<option value="noshow">🚫 No Show</option>
 	<option value="canceled">✖ Canceled</option>
 	<option value="pending">⏳ pending</option>
+	<option value="archived">🗄 Archived</option>
 	</select>
         <input
           placeholder="Client name or phone"
@@ -546,45 +677,79 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
                 )}
               </td>
               <td className="p-2 border">{renderAddOns(appt.addOns)}</td>
-              <td className="p-2 border space-x-2">
+              <td className="border p-0">
+                <div className="flex min-w-[176px] items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    title="Mark completed"
+                    aria-label="Mark appointment completed"
+                    disabled={appt.status === 'completed'}
+                    onClick={() => handleComplete(appt)}
+                    className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
+                      appt.status === 'completed'
+                        ? 'border-green-800 bg-green-700 text-white'
+                        : 'border-green-600 bg-green-500 text-white hover:bg-green-600'
+                    }`}
+                  >
+                    CMP
+                  </button>
 
-<select
-  className="border p-1 text-xs rounded"
-  value=""
-  onChange={(e) => {
-    const action = e.target.value;
-         if (action === 'booked') handleUpdate(appt._id, { status: 'booked' }, 'booked');
-    else if (action === 'complete') handleComplete(appt);
-    else if (action === 'noshow') handleUpdate(appt._id, { status: 'noshow' }, 'no show');
-    else if (action === 'cancel') handleCancel(appt._id, { status: 'cancel' }, 'cancel');
-    else if (action === 'pending') handleUpdate(appt._id, { status: 'pending' }, 'pending');
-    else if (action === 'edit')  {setSelectedAppt(appt); setModalOpen(true); }
-    else if (action === 'delete') {
-      if (window.confirm('Are you sure you want to delete this appointment?')) {
-        handleDelete(appt._id);
-      }
-    }
-    e.target.selectedIndex = 0;
-  }}
->
-<option value="">
-  {appt.status === 'booked' ? '📅 Booked' :
-   appt.status === 'completed' ? '✔ Completed' :
-   appt.status === 'noshow' ? '🚫 No Show' :
-   appt.status === 'canceled' ? '✖ Canceled' :
-   appt.status === 'pending' ? '⏳ pending' :
-   appt.status}
-</option>  <option value="booked">📅 Booked</option>
-  <option value="complete">✔ Completed</option>
-  <option value="edit">✏️ Edit</option>
-  <option value="noshow">🚫 No Show</option>
-  <option value="cancel">✖ Cancel</option>
-  <option value="delete">🗑 Delete</option>
-  <option value="pending">⏳ pending</option>
-</select>
+                  <button
+                    type="button"
+                    title="Mark canceled"
+                    aria-label="Mark appointment canceled"
+                    disabled={appt.status === 'canceled'}
+                    onClick={() => handleCancel(appt._id)}
+                    className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
+                      appt.status === 'canceled'
+                        ? 'border-yellow-700 bg-yellow-500 text-gray-900'
+                        : 'border-yellow-500 bg-yellow-300 text-gray-900 hover:bg-yellow-400'
+                    }`}
+                  >
+                    CAN
+                  </button>
 
+                  <button
+                    type="button"
+                    title="Mark no-show"
+                    aria-label="Mark appointment no-show"
+                    disabled={appt.status === 'noshow'}
+                    onClick={() => handleUpdate(appt._id, { status: 'noshow' })}
+                    className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
+                      appt.status === 'noshow'
+                        ? 'border-red-900 bg-red-700 text-white'
+                        : 'border-red-700 bg-red-600 text-white hover:bg-red-700'
+                    }`}
+                  >
+                    NSH
+                  </button>
 
-
+                  <select
+                    className="h-7 w-7 cursor-pointer appearance-none rounded-sm border border-blue-800 bg-blue-600 p-0 text-center text-[11px] font-black leading-none text-white shadow-sm hover:bg-blue-700"
+                    value=""
+                    aria-label="More appointment actions"
+                    title="More actions"
+                    onChange={(e) => {
+                      const action = e.target.value;
+                      if (action === 'booked') handleUpdate(appt._id, { status: 'booked' });
+                      else if (action === 'pending') handleUpdate(appt._id, { status: 'pending' });
+                      else if (action === 'edit') {
+                        setSelectedAppt(appt);
+                        setModalOpen(true);
+                      } else if (action === 'delete') {
+                        if (window.confirm('Are you sure you want to delete this appointment?')) {
+                          handleDelete(appt._id);
+                        }
+                      }
+                    }}
+                  >
+                    <option value="">▼</option>
+                    <option value="booked">📅 Mark booked</option>
+                    <option value="pending">⏳ Mark pending</option>
+                    <option value="edit">✏️ Edit appointment</option>
+                    <option value="delete">🗑 Delete appointment</option>
+                  </select>
+                </div>
               </td>
             </tr>
 ); 

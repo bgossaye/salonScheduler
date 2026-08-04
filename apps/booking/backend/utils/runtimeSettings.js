@@ -187,6 +187,48 @@ const DEFAULT_RUNTIME_SETTINGS = [
     defaultValue: envNumber('ONLINE_BOOKING_MAX_SERVICES_PER_VISIT', 2),
   },
   {
+    key: 'appointmentRetention.archiveCompletedDays',
+    type: 'number',
+    group: 'Appointment History & Retention',
+    label: 'Archive completed appointments after',
+    description: 'Number of days after the appointment date before completed appointments move out of the active list.',
+    defaultValue: envNumber('APPOINTMENT_ARCHIVE_COMPLETED_DAYS', 180),
+  },
+  {
+    key: 'appointmentRetention.archiveCanceledDays',
+    type: 'number',
+    group: 'Appointment History & Retention',
+    label: 'Archive canceled appointments after',
+    description: 'Number of days after the appointment date before canceled appointments move out of the active list.',
+    defaultValue: envNumber('APPOINTMENT_ARCHIVE_CANCELED_DAYS', 90),
+  },
+  {
+    key: 'appointmentRetention.archiveNoShowDays',
+    type: 'number',
+    group: 'Appointment History & Retention',
+    label: 'Archive no-show appointments after',
+    description: 'Number of days after the appointment date before no-show appointments move out of the active list.',
+    defaultValue: envNumber('APPOINTMENT_ARCHIVE_NOSHOW_DAYS', 180),
+  },
+  {
+    key: 'appointmentRetention.permanentDeleteEnabled',
+    type: 'boolean',
+    group: 'Appointment History & Retention',
+    label: 'Enable permanent deletion',
+    description: 'When disabled, archived appointments are never automatically deleted. Keep this OFF until the salon intentionally adopts a deletion policy.',
+    defaultValue: envBool('APPOINTMENT_PERMANENT_DELETE_ENABLED', false),
+    isAdvanced: true,
+  },
+  {
+    key: 'appointmentRetention.deleteArchivedDays',
+    type: 'number',
+    group: 'Appointment History & Retention',
+    label: 'Delete archived appointments after',
+    description: 'Age in days after archival before permanent deletion. Used only when permanent deletion is enabled. Default is three years.',
+    defaultValue: envNumber('APPOINTMENT_DELETE_ARCHIVED_DAYS', 1095),
+    isAdvanced: true,
+  },
+  {
     key: 'promotions.enabled',
     type: 'boolean',
     group: 'Promotions',
@@ -325,6 +367,14 @@ async function setRuntimeSetting(key, value, updatedBy = '') {
   }
 
   let normalized = normalizeValueForType(value, def.type);
+
+  if (key.startsWith('appointmentRetention.') && def.type === 'number') {
+    if (!Number.isInteger(normalized) || normalized < 1 || normalized > 3650) {
+      const err = new Error('Appointment retention days must be a whole number between 1 and 3650.');
+      err.status = 400;
+      throw err;
+    }
+  }
 
   if (key === 'booking.online.maxServicesPerVisit') {
     if (!Number.isInteger(normalized) || normalized < 1 || normalized > 4) {

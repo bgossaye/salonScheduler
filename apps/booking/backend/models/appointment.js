@@ -72,6 +72,11 @@ const appointmentSchema = new mongoose.Schema({
   appliedPromotion: { type: appliedPromotionSchema, default: null },
   priceSnapshot: { type: priceSnapshotSchema, default: null },
   groupBooking: { type: groupBookingSnapshotSchema, default: null },
+  archived: { type: Boolean, default: false, index: true },
+  archivedAt: { type: Date, default: null },
+  archiveReason: { type: String, default: '' },
+  retentionHold: { type: Boolean, default: false, index: true },
+  retentionHoldReason: { type: String, default: '' },
 }, { timestamps: true });
 
 module.exports = mongoose.models.Appointment || mongoose.model('Appointment', appointmentSchema);

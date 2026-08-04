@@ -17,12 +17,22 @@ const helmet = require("helmet");
 const { googleReviewsHandler } = require('./routes/google'); 
 const REMINDER_CRON = '0 10 * * *';
 const REMINDER_TIMEZONE = 'America/New_York';
+const { runAppointmentRetention } = require('./utils/appointmentRetention');
+const RETENTION_CRON = '0 3 * * *';
 cron.schedule(REMINDER_CRON, async () => {
     const startedAt = new Date();
     console.log(`[reminders] Daily reminder job started at ${startedAt.toLocaleString('en-US', { timeZone: REMINDER_TIMEZONE })} (${REMINDER_TIMEZONE})`);
     await sendDailyReminders();
 }, { timezone: REMINDER_TIMEZONE });
 console.log(`[reminders] Daily reminder cron scheduled: ${REMINDER_CRON} (${REMINDER_TIMEZONE})`);
+cron.schedule(RETENTION_CRON, async () => {
+  try {
+    await runAppointmentRetention({ source: 'scheduled' });
+  } catch (err) {
+    console.error('[appointment-retention] scheduled cleanup failed', err);
+  }
+}, { timezone: REMINDER_TIMEZONE });
+console.log(`[appointment-retention] Daily cleanup scheduled: ${RETENTION_CRON} (${REMINDER_TIMEZONE})`);
 const inbound = require('./routes/twilioInbound');
 
 async function sendDailyReminders() {

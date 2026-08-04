@@ -477,6 +477,8 @@ exports.getAppointments = async (req, res) => {
   try {
     const { date, status, client, workerId } = req.query;
     const query = {};
+    const archivedMode = String(req.query.archived || '').toLowerCase();
+    query.archived = archivedMode === 'true' || archivedMode === '1' ? true : { $ne: true };
     const ownScopeRequested = ['own', 'my', 'myWork', 'true', '1'].includes(String(req.query.scope || req.query.view || req.query.own || '').trim());
     const mine = tokenWorkerId(req);
 

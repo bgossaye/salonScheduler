@@ -37,50 +37,43 @@ function getWorkerName(appt) {
   return appt?.workerName || appt?.workerId?.displayName || appt?.priceSnapshot?.workerName || null;
 }
 
-function money(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `$${number.toFixed(2)}` : null;
-}
-
-function getPriceDetails(appt) {
+function getPromotionDetails(appt) {
   const snapshot = appt?.priceSnapshot || {};
-  const original = Number(snapshot.servicePrice || 0) + Number(snapshot.addOnPrice || 0);
-  const discount = Number(snapshot.discountAmount || 0);
-  const final = snapshot.finalPrice ?? (original > 0 ? Math.max(0, original - discount) : null);
   const promotion = appt?.appliedPromotion || null;
   const couponCode = String(promotion?.couponCode || appt?.couponCode || '').trim().toUpperCase();
+  const discountValue = Number(
+    promotion?.discountValue
+    ?? promotion?.discountPercent
+    ?? snapshot?.discountPercent
+    ?? 0
+  );
+  const discountType = promotion?.discountType === 'fixed' ? 'fixed' : 'percent';
+  const discountLabel = Number.isFinite(discountValue) && discountValue > 0
+    ? (discountType === 'fixed' ? `$${discountValue} off` : `${discountValue}% off`)
+    : '';
 
   return {
-    original: original > 0 ? money(original) : null,
-    discount: discount > 0 ? money(discount) : null,
-    final: final == null || final === '' ? null : money(final),
     label: promotion?.appointmentLabel || promotion?.title || (couponCode ? `${couponCode} coupon` : ''),
     couponCode,
-    applied: discount > 0 || !!promotion || !!couponCode,
+    discountLabel,
+    applied: Number(snapshot.discountAmount || 0) > 0 || !!promotion || !!couponCode,
   };
 }
 
 function CouponPriceDetails({ appt }) {
-  const details = getPriceDetails(appt);
-  if (!details.final && !details.applied) return null;
+  const details = getPromotionDetails(appt);
+  if (!details.applied) return null;
 
   return (
-    <div className="mt-1">
-      {details.applied && (
-        <div className="mb-1 inline-flex flex-wrap items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
-          <span>{details.label || 'Coupon applied'}</span>
-          {details.couponCode && <span>({details.couponCode})</span>}
-        </div>
-      )}
-      {details.applied && details.original && details.discount ? (
-        <div className="text-sm">
-          <div><strong>Original price:</strong> <span className="line-through text-gray-500">{details.original}</span></div>
-          <div className="text-emerald-700"><strong>Discount:</strong> -{details.discount}</div>
-          <div><strong>Final price:</strong> {details.final}</div>
-        </div>
-      ) : (
-        details.final && <p><strong>Price:</strong> {details.final}</p>
-      )}
+    <div className="mt-2 rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+      <div className="font-semibold">
+        {details.label || 'Promotion applied'}
+        {details.couponCode && ` (${details.couponCode})`}
+        {details.discountLabel && ` — ${details.discountLabel}`}
+      </div>
+      <div className="mt-1">
+        The discount will be taken from the final eligible service total after salon pricing is confirmed.
+      </div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { discountedPriceCents, getDealForService, usePublicDeals } from '../utils/publicDeals';
+import { getDealForService, usePublicDeals } from '../utils/publicDeals';
 
 const SERVICES_PATH = window.ENV?.SERVICES_PATH || '/api/services';
 const SERVICES_URL = /^https?:\/\//i.test(SERVICES_PATH)
@@ -312,9 +312,12 @@ export default function Services() {
           Service Menu
         </p>
         <div className="mt-4 mx-auto h-[2px] w-40 bg-gradient-to-r from-transparent via-gray-400 to-transparent" />
-        <p className="mt-2 text-xs text-gray-500">
-          * Prices may vary based on hair length, density, or texture.
-        </p>
+        <div className="mx-auto mt-5 max-w-3xl rounded-xl border-2 border-amber-400 bg-amber-50 px-5 py-4 text-left text-sm text-amber-950 shadow-sm">
+          <div className="font-bold uppercase tracking-wide">Important pricing notice</div>
+          <p className="mt-1">
+            All menu prices are starting prices. Final pricing may vary based on hair length, density, texture, condition, product needs, service complexity, and time required. Consultation may be required, and the salon will confirm final pricing before service begins.
+          </p>
+        </div>
 
         {deals.length > 0 && (
         <div className="mx-auto mt-6 max-w-3xl rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-yellow-50 to-white p-5 text-left shadow-sm">
@@ -327,7 +330,7 @@ export default function Services() {
                 {deals[0]?.title || 'Current special'}
               </h2>
               <p className="mt-2 text-sm text-slate-700">
-                Eligible services below show their current promotional price automatically.
+                Eligible services below show the promotion. The discount is applied to the final eligible service total after salon pricing is confirmed.
               </p>
             </div>
             <a
@@ -427,9 +430,6 @@ export default function Services() {
                   const andUp =
                     (s.label && /and\s*up/i.test(String(s.label))) || s.and_up;
                   const specialDeal = getDealForService(s, deals);
-                  const discountedPrice = specialDeal
-                    ? formatPrice(discountedPriceCents(s, specialDeal))
-                    : null;
 
                   return (
                     <article
@@ -456,7 +456,7 @@ export default function Services() {
                             {specialDeal.shortLabel}
                           </span>
                           <span className="text-xs text-slate-600">
-                            Promotional price shown below
+                            Discount applies to final eligible total
                           </span>
                         </div>
                       )}
@@ -470,6 +470,7 @@ export default function Services() {
                             specialDeal ? 'text-gray-400 line-through' : 'text-gray-900'
                           }`}
                         >
+                          <span className="mr-1 text-xs font-medium text-gray-500">Starting from</span>
                           {price}
                           {andUp ? (
                             <span className="ml-1 text-xs text-gray-500">and up</span>
@@ -478,13 +479,13 @@ export default function Services() {
                       </div>
 
                       {specialDeal && (
-                        <div className="mt-2 flex items-baseline justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm">
-                          <span className="font-medium text-amber-800">
-                            Special price
-                          </span>
-                          <span className="text-base font-semibold text-amber-900">
-                            {discountedPrice}
-                          </span>
+                        <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                          <div className="font-semibold">
+                            {specialDeal.discountLabel || specialDeal.shortLabel || 'Special offer'} applied
+                          </div>
+                          <div className="mt-1 text-xs">
+                            Discount is taken from the final eligible service total after salon pricing is confirmed.
+                          </div>
                         </div>
                       )}
 
@@ -503,6 +504,12 @@ export default function Services() {
       {services && grouped.length === 0 && (
         <div className="mt-12 rounded-xl border bg-white p-10 text-center text-gray-600">
           No services match your search.
+        </div>
+      )}
+
+      {services && grouped.length > 0 && (
+        <div className="mt-10 rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm text-amber-950">
+          <strong>Pricing reminder:</strong> All prices shown are starting prices. Hair length, density, texture, condition, products, complexity, and required time may change the final amount. Consultation may be required.
         </div>
       )}
     </main>

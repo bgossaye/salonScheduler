@@ -1,3 +1,4 @@
+const { previewAppointmentRetention, runAppointmentRetention } = require('../../utils/appointmentRetention');
 const {
   getAllRuntimeSettings,
   setRuntimeSetting,
@@ -38,5 +39,25 @@ exports.updateOne = async (req, res) => {
       error: err.status === 400 ? err.message : 'Failed to update runtime setting',
       allowedKeys: err.allowedKeys,
     });
+  }
+};
+
+
+exports.previewAppointmentRetention = async (req, res) => {
+  try {
+    res.json(await previewAppointmentRetention());
+  } catch (err) {
+    console.error('❌ appointment retention preview failed', err);
+    res.status(500).json({ error: 'Failed to preview appointment retention cleanup' });
+  }
+};
+
+exports.runAppointmentRetention = async (req, res) => {
+  try {
+    const updatedBy = req.admin?.email || req.admin?.id || '';
+    res.json({ success: true, summary: await runAppointmentRetention({ source: 'admin', updatedBy }) });
+  } catch (err) {
+    console.error('❌ appointment retention cleanup failed', err);
+    res.status(500).json({ error: 'Failed to run appointment retention cleanup' });
   }
 };

@@ -8,14 +8,20 @@
     "packages/ui",
     "packages/tokens"
   ],
-  "scripts": { 
-   "dev:stack": "powershell -ExecutionPolicy Bypass -File scripts\\Start-Stack.ps1",
-   "clean": "rimraf apps/*/{build,dist} || true",
-   "build:site": "npm -w site run build",
-   "build:booking:backend": "npm -w booking-backend run build || echo no-build-step",
-   "build:booking:frontend": "npm -w booking-frontend run build",
-   "build": "npm run clean && npm run build:site && npm run build:booking:backend && npm run build:booking:frontend",
-   "sanity:check": "node scripts/sanity-check.mjs"
-},
-  "engines": { "node": ">=20 <23", "npm": ">=10" }
+  "scripts": {
+    "dev:stack": "powershell -ExecutionPolicy Bypass -File scripts\\Start-Stack.ps1",
+    "clean": "rimraf apps/*/{build,dist} || true",
+    "build:site": "npm -w site run build",
+    "build:booking:backend": "npm -w booking-backend run build || echo no-build-step",
+    "build:booking:frontend": "npm -w booking-frontend run build",
+    "build": "npm run clean && npm run build:site && npm run build:booking:backend && npm run build:booking:frontend",
+    "sanity:check": "node scripts/sanity-check.mjs"
+  },
+  "engines": {
+    "node": ">=20 <23",
+    "npm": ">=10"
+  },
+  "dependencies": {
+    "nodemailer": "^9.0.3"
+  }
 }
