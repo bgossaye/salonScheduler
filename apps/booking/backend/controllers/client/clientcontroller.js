@@ -586,3 +586,245 @@ exports.updateClient = async (req, res) => {
 };
 
 exports.verifyOtpOnly = exports.verifyPinOtp;
+
+function familyAuthMatches(owner, body = {}, query = {}) {
+  const submittedPhone = normalizePhone(body.ownerPhone || body.phone || query.ownerPhone || query.phone || '');
+  return !!owner && submittedPhone.length === 10 && normalizePhone(owner.phone) === submittedPhone;
+}
+
+function familyMemberSummary(client, relationship = 'family') {
+  if (!client) return null;
+  const safe = safeClient(client);
+  return {
+    _id: safe._id,
+    firstName: safe.firstName,
+    lastName: safe.lastName,
+    phone: safe.phone,
+    relationship,
+    managedByClientId: safe.managedByClientId || null,
+    assignedStylistId: safe.assignedStylistId || null,
+    preferredStylistId: safe.preferredStylistId || null,
+    lastStylistId: safe.lastStylistId || null,
+  };
+}
+
+exports.getFamilyMembers = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id)
+      .select('firstName lastName phone familyLinks')
+      .populate({
+        path: 'familyLinks.clientId',
+        select: 'firstName lastName phone managedByClientId assignedStylistId preferredStylistId lastStylistId',
+      })
+      .lean();
+    if (!owner) return res.status(404).json({ error: 'Client not found' });
+    if (!familyAuthMatches(owner, {}, req.query || {})) {
+      return res.status(403).json({ error: 'Unable to verify this family account.' });
+    }
+
+    const members = (owner.familyLinks || [])
+      .map((link) => familyMemberSummary(link.clientId, link.relationship))
+      .filter(Boolean);
+    return res.json({ owner: familyMemberSummary(owner, 'self'), members });
+  } catch (err) {
+    console.error('getFamilyMembers failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not load family members.' });
+  }
+};
+
+exports.addFamilyMember = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).select('+pinHash').exec();
+    if (!owner) return res.status(404).json({ error: 'Client not found' });
+    if (!familyAuthMatches(owner, req.body || {}, {})) {
+      return res.status(403).json({ error: 'Unable to verify this family account.' });
+    }
+
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const memberPhone = normalizePhone(req.body?.memberPhone || req.body?.familyPhone || '');
+    const relationship = String(req.body?.relationship || 'family').trim().slice(0, 40) || 'family';
+    if (!firstName || !lastName || !/^\d{10}$/.test(memberPhone)) {
+      return res.status(400).json({ error: 'Family member name and a valid 10-digit phone are required.' });
+    }
+    if (memberPhone === normalizePhone(owner.phone)) {
+      return res.status(400).json({ error: 'That phone belongs to the signed-in client.' });
+    }
+
+    let member = await Client.findOne({ phone: memberPhone }).select('+pinHash').exec();
+    let created = false;
+    if (!member) {
+      const defaultPin = last4(memberPhone);
+      member = await Client.create({
+        firstName,
+        lastName,
+        phone: memberPhone,
+        pinHash: await bcrypt.hash(defaultPin, 10),
+        pinSetAt: new Date(),
+        pinIsDefault: true,
+        requiresNamePinUpgrade: true,
+        managedByClientId: owner._id,
+        contactPreferences: { method: 'sms', optInPromotions: false, emailDisabled: false },
+      });
+      created = true;
+    }
+
+    const alreadyLinked = (owner.familyLinks || []).some((link) => String(link.clientId) === String(member._id));
+    if (!alreadyLinked) {
+      owner.familyLinks.push({ clientId: member._id, relationship });
+      await owner.save();
+    }
+
+    const reciprocal = (member.familyLinks || []).some((link) => String(link.clientId) === String(owner._id));
+    if (!reciprocal) {
+      member.familyLinks.push({ clientId: owner._id, relationship: 'family' });
+      if (!member.managedByClientId) member.managedByClientId = owner._id;
+      await member.save();
+    }
+
+    if (created) {
+      setImmediate(() => {
+        sendSMS('pin_changed', { clientId: safeClient(member) }, {
+          messageOverride: `You were added to a Rakie Salon family account. Your temporary PIN is the last 4 digits of your phone. You will be asked to change it when you sign in.`,
+        }).catch(err => console.error('[addFamilyMember] sendSMS error:', err?.message || err));
+      });
+    }
+
+    return res.status(created ? 201 : 200).json({
+      created,
+      member: familyMemberSummary(member, relationship),
+    });
+  } catch (err) {
+    console.error('addFamilyMember failed:', err?.message || err);
+    if (err?.code === 11000) return res.status(409).json({ error: 'A client with that phone already exists.' });
+    return res.status(500).json({ error: 'Could not add the family member.' });
+  }
+};
+
+
+function isManagedDependent(ownerId, member, relationship = '') {
+  const rel = String(relationship || '').trim().toLowerCase();
+  const dependentRelationship = ['child', 'son', 'daughter', 'dependent', 'minor', 'ward'].includes(rel);
+  return dependentRelationship || String(member?.managedByClientId || '') === String(ownerId || '');
+}
+
+exports.getFamilyOverview = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id)
+      .select('firstName lastName phone familyLinks')
+      .populate({
+        path: 'familyLinks.clientId',
+        select: 'firstName lastName phone managedByClientId assignedStylistId preferredStylistId lastStylistId',
+      })
+      .lean();
+    if (!owner) return res.status(404).json({ error: 'Client not found' });
+    if (!familyAuthMatches(owner, {}, req.query || {})) {
+      return res.status(403).json({ error: 'Unable to verify this family account.' });
+    }
+
+    const people = [familyMemberSummary(owner, 'self'), ...(owner.familyLinks || [])
+      .map((link) => familyMemberSummary(link.clientId, link.relationship))
+      .filter(Boolean)];
+    const ids = people.map((person) => person?._id).filter(Boolean);
+    const Appointment = require('../../models/appointment');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dateFloor = today.toISOString().slice(0, 10);
+    const appointments = await Appointment.find({
+      clientId: { $in: ids },
+      status: { $in: ['pending', 'booked'] },
+      date: { $gte: dateFloor },
+      $or: [{ archivedAt: null }, { archivedAt: { $exists: false } }],
+    }).sort({ date: 1, time: 1 }).lean();
+
+    const byClient = new Map();
+    for (const appt of appointments) {
+      const key = String(appt.clientId || '');
+      if (!byClient.has(key)) byClient.set(key, []);
+      byClient.get(key).push(appt);
+    }
+
+    const members = people.map((person) => {
+      const upcoming = byClient.get(String(person._id)) || [];
+      return {
+        ...person,
+        canEditProfile: person.relationship === 'self' || isManagedDependent(owner._id, person, person.relationship),
+        upcomingAppointments: upcoming,
+        nextAppointment: upcoming[0] || null,
+        pendingCount: upcoming.filter((appt) => String(appt.status).toLowerCase() === 'pending').length,
+      };
+    });
+
+    return res.json({
+      ownerClientId: owner._id,
+      members,
+      summary: {
+        upcomingCount: appointments.length,
+        pendingCount: appointments.filter((appt) => String(appt.status).toLowerCase() === 'pending').length,
+        withoutAppointmentCount: members.filter((member) => !member.nextAppointment).length,
+      },
+    });
+  } catch (err) {
+    console.error('getFamilyOverview failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not load the family overview.' });
+  }
+};
+
+exports.updateFamilyMember = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).select('firstName lastName phone familyLinks').exec();
+    if (!owner) return res.status(404).json({ error: 'Client not found' });
+    if (!familyAuthMatches(owner, req.body || {}, {})) {
+      return res.status(403).json({ error: 'Unable to verify this family account.' });
+    }
+    const link = (owner.familyLinks || []).find((item) => String(item.clientId) === String(req.params.memberId));
+    if (!link) return res.status(404).json({ error: 'That client is not linked to this family account.' });
+    const member = await Client.findById(req.params.memberId).exec();
+    if (!member) return res.status(404).json({ error: 'Family member not found.' });
+
+    const priorRelationship = link.relationship || 'family';
+    const relationship = String(req.body?.relationship || priorRelationship).trim().slice(0, 40) || 'family';
+    const canEditProfile = isManagedDependent(owner._id, member, priorRelationship);
+    link.relationship = relationship;
+    if (canEditProfile) {
+      const firstName = String(req.body?.firstName ?? member.firstName ?? '').trim();
+      const lastName = String(req.body?.lastName ?? member.lastName ?? '').trim();
+      if (!firstName || !lastName) return res.status(400).json({ error: 'First and last name are required.' });
+      member.firstName = firstName;
+      member.lastName = lastName;
+      const submittedPhone = normalizePhone(req.body?.memberPhone || req.body?.phone || member.phone || '');
+      if (!/^\d{10}$/.test(submittedPhone)) return res.status(400).json({ error: 'Enter a valid 10-digit phone number.' });
+      const duplicate = await Client.findOne({ phone: submittedPhone, _id: { $ne: member._id } }).lean();
+      if (duplicate) return res.status(409).json({ error: 'That phone number is already used by another client.' });
+      member.phone = submittedPhone;
+      await member.save();
+    }
+    await owner.save();
+    return res.json({ member: familyMemberSummary(member, relationship), canEditProfile });
+  } catch (err) {
+    console.error('updateFamilyMember failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not update the family member.' });
+  }
+};
+
+exports.unlinkFamilyMember = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).select('phone familyLinks').exec();
+    if (!owner) return res.status(404).json({ error: 'Client not found' });
+    if (!familyAuthMatches(owner, req.body || {}, {})) {
+      return res.status(403).json({ error: 'Unable to verify this family account.' });
+    }
+    const before = owner.familyLinks.length;
+    owner.familyLinks = owner.familyLinks.filter((item) => String(item.clientId) !== String(req.params.memberId));
+    if (owner.familyLinks.length === before) return res.status(404).json({ error: 'That client is not linked to this family account.' });
+    await owner.save();
+    await Client.updateOne(
+      { _id: req.params.memberId },
+      { $pull: { familyLinks: { clientId: owner._id } } }
+    );
+    return res.json({ message: 'Family member unlinked. Their client account and appointment history were not deleted.' });
+  } catch (err) {
+    console.error('unlinkFamilyMember failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not unlink the family member.' });
+  }
+};

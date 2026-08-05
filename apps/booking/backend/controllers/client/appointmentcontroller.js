@@ -396,43 +396,78 @@ exports.createAppointmentBatch = async (req, res) => {
       });
     }
 
-    const maxServices = getOnlineServiceLimit(await getRuntimeNumber('booking.online.maxServicesPerVisit', 2));
-    if (rows.length > maxServices) {
-      return res.status(403).json({
-        error: `For more than ${maxServices} service${maxServices === 1 ? '' : 's'}, please call Rakie Salon so we can allocate enough time for your visit.`,
-        code: 'ONLINE_SERVICE_LIMIT_EXCEEDED',
-        maxOnlineServicesPerVisit: maxServices,
-      });
-    }
+    // The online limit is per person, not per family batch. Runtime settings may
+    // lower the cap to one, but online clients can never exceed two services each.
+    const configuredMax = getOnlineServiceLimit(await getRuntimeNumber('booking.online.maxServicesPerVisit', 2));
+    const maxServicesPerClient = Math.min(configuredMax, 2);
 
     rows.forEach((row, index) => validatePublicAppointmentRow(row, index + 1));
 
-    const firstClientId = String(rows[0].clientId || '').trim();
-    const firstDate = String(rows[0].date || '').trim();
-    const firstWorkerId = String(rows[0].workerId || '').trim();
+    const distinctClientIds = Array.from(new Set(rows.map((row) => String(row.clientId || '').trim()).filter(Boolean)));
+    const isFamilyBooking = distinctClientIds.length > 1;
+    const rowsByClient = new Map();
+    for (const row of rows) {
+      const clientId = String(row.clientId || '').trim();
+      const clientRows = rowsByClient.get(clientId) || [];
+      clientRows.push(row);
+      rowsByClient.set(clientId, clientRows);
+    }
 
-    for (let i = 0; i < rows.length; i += 1) {
-      if (String(rows[i].clientId || '').trim() !== firstClientId) {
+    for (const [clientId, clientRows] of rowsByClient.entries()) {
+      if (clientRows.length > maxServicesPerClient) {
         return res.status(403).json({
-          error: 'Online multi-service booking is only available for one linked client at a time. For family, event, or mixed-client booking, please call Rakie Salon.',
-          code: 'ONLINE_BATCH_SINGLE_CLIENT_ONLY',
-        });
-      }
-      if (String(rows[i].date || '').trim() !== firstDate) {
-        return res.status(400).json({
-          error: 'All services in one online visit must use the same date so the salon can keep the schedule together.',
-          code: 'ONLINE_BATCH_ONE_DATE_REQUIRED',
-        });
-      }
-      if (firstWorkerId && String(rows[i].workerId || '').trim() && String(rows[i].workerId || '').trim() !== firstWorkerId) {
-        return res.status(400).json({
-          error: 'All services in one online visit must use the same stylist. Please call Rakie Salon for coordinated multi-stylist service.',
-          code: 'ONLINE_BATCH_ONE_WORKER_REQUIRED',
+          error: `Each client may book a maximum of ${maxServicesPerClient} service${maxServicesPerClient === 1 ? '' : 's'} online.`,
+          code: 'ONLINE_SERVICE_LIMIT_EXCEEDED',
+          clientId,
+          maxOnlineServicesPerClient: maxServicesPerClient,
         });
       }
     }
 
-    await assertOnlineBookingAllowedForDate(firstDate);
+    if (isFamilyBooking) {
+      const ownerClientId = String(req.body?.bookingOwnerClientId || '').trim();
+      const ownerPhone = phone10(req.body?.bookingOwnerPhone || '');
+      const owner = ownerClientId
+        ? await Client.findById(ownerClientId).select('phone familyLinks').lean()
+        : null;
+      const allowedIds = new Set([
+        ownerClientId,
+        ...((owner?.familyLinks || []).map((link) => String(link.clientId || '')).filter(Boolean)),
+      ]);
+      const verified = !!owner && ownerPhone.length === 10 && phone10(owner.phone) === ownerPhone;
+      if (!verified || distinctClientIds.some((id) => !allowedIds.has(id))) {
+        return res.status(403).json({
+          error: 'Every person in this online family booking must be linked to the signed-in family account.',
+          code: 'ONLINE_FAMILY_LINK_REQUIRED',
+        });
+      }
+    }
+
+    // Multiple services belonging to the same person form one continuous visit:
+    // they must stay on one date and with one stylist. Different family members
+    // may use different stylists, and independent family bookings may use different dates.
+    for (const clientRows of rowsByClient.values()) {
+      const clientDate = String(clientRows[0]?.date || '').trim();
+      const clientWorkerId = String(clientRows[0]?.workerId || '').trim();
+      for (const row of clientRows) {
+        if (String(row.date || '').trim() !== clientDate) {
+          return res.status(400).json({
+            error: 'A client’s services in one online visit must use the same date.',
+            code: 'ONLINE_CLIENT_ONE_DATE_REQUIRED',
+          });
+        }
+        if (clientWorkerId && String(row.workerId || '').trim() && String(row.workerId || '').trim() !== clientWorkerId) {
+          return res.status(400).json({
+            error: 'A client’s services in one online visit must use the same stylist.',
+            code: 'ONLINE_CLIENT_ONE_WORKER_REQUIRED',
+          });
+        }
+      }
+    }
+
+    for (const date of new Set(rows.map((row) => String(row.date || '').trim()))) {
+      await assertOnlineBookingAllowedForDate(date);
+    }
 
     const preparedPayloads = [];
     for (let i = 0; i < rows.length; i += 1) {
@@ -443,7 +478,7 @@ exports.createAppointmentBatch = async (req, res) => {
         status: 'pending',
         bookingFlags: Array.from(new Set([
           ...((rows[i]?.bookingFlags || rows[i]?.flags || []).filter(Boolean)),
-          'online_multi_service_visit',
+          isFamilyBooking ? 'online_family_booking' : 'online_multi_service_visit',
         ])),
       }));
       preparedPayloads.push(payload);
@@ -480,7 +515,7 @@ exports.createAppointmentBatch = async (req, res) => {
     res.status(201).json({
       appointments: populated,
       count: populated.length,
-      mode: 'online_multi_service_visit',
+      mode: isFamilyBooking ? 'online_family_booking' : 'online_multi_service_visit',
     });
 
     for (const saved of savedAppointments) {

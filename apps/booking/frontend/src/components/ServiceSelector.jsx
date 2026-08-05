@@ -1,11 +1,12 @@
 // Finalized ServiceSelector.jsx with frozen top banner and preserved layout
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import API from '../api';
 import { toast } from 'react-toastify';
 import logo from '../assets/TheRSlogo.png';
+import familyHubIcon from '../assets/family-hub.png';
 import {
   doesDateQualifyForDeal,
   getDealAppliesOnlyText,
@@ -53,6 +54,11 @@ function idOf(value) {
 
 function workerDisplayName(worker) {
   return worker?.displayName || [worker?.firstName, worker?.lastName].filter(Boolean).join(' ') || 'Stylist';
+}
+
+function timeToMinutes(timeStr) {
+  const [hStr, mStr] = String(timeStr || '').split(':');
+  return (parseInt(hStr, 10) || 0) * 60 + (parseInt(mStr, 10) || 0);
 }
 
 function addMinutesToTime(timeStr, minutesToAdd) {
@@ -109,6 +115,7 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [availableTimes, setAvailableTimes] = useState([]);
   const [selectedTime, setSelectedTime] = useState(null);
   const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0);
+  const availabilityRequestRef = useRef(0);
   const [addOns, setAddOns] = useState([]);
   const [selectedAddOns, setSelectedAddOns] = useState([]);
   const [serviceBasket, setServiceBasket] = useState([]);
@@ -127,8 +134,18 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [bookingSettings, setBookingSettings] = useState({ maxOnlineServicesPerVisit: 2, limitMessage: 'For more than 2 services, please call Rakie Salon so we can allocate enough time for your visit.' });
   const [separateServiceCount, setSeparateServiceCount] = useState(() => readOnlineBookingCount());
   const [bookingCompleteNotice, setBookingCompleteNotice] = useState(null);
+  const [familyMembers, setFamilyMembers] = useState([]);
+  const [selectedBookingClientIds, setSelectedBookingClientIds] = useState([]);
+  const [activeFamilyBookingIndex, setActiveFamilyBookingIndex] = useState(0);
+  const [familyBookingDrafts, setFamilyBookingDrafts] = useState([]);
+  const [familyStepSelections, setFamilyStepSelections] = useState({});
+  const [familyScheduleMode, setFamilyScheduleMode] = useState('individual'); // individual | together-auto | together-same | together-back-to-back
+  const [showAddFamilyMember, setShowAddFamilyMember] = useState(false);
+  const [familyMemberForm, setFamilyMemberForm] = useState({ firstName: '', lastName: '', phone: '', relationship: 'family' });
+  const [familySaving, setFamilySaving] = useState(false);
+  const [showFamilyBookingPanel, setShowFamilyBookingPanel] = useState(false);
   const [openPriceServiceId, setOpenPriceServiceId] = useState(null);
-  const [bookingStatus, setBookingStatus] = useState({ currentNotices: [], futureNotices: [], promotions: [], storeStatus: null });
+  const [bookingStatus, setBookingStatus] = useState({ currentNotices: [], futureNotices: [], promotions: [], storeStatus: null, shopMode: null });
   const getEditingId = (apt) => apt?._id || apt?.id || apt?.appointmentId || null;
 
   // Initialize from prop OR localStorage synchronously to avoid a redirect race
@@ -206,6 +223,128 @@ useEffect(() => {
   } catch {console.log("");}
 }, [effectiveClient]);
 
+
+useEffect(() => {
+  const ownerId = effectiveClient?._id;
+  const ownerPhone = effectiveClient?.phone;
+  if (!ownerId || !ownerPhone || mode !== 'create') return;
+
+  setSelectedBookingClientIds((currentIds) => currentIds.length ? currentIds : [String(ownerId)]);
+  API.get(`/clients/${ownerId}/family`, { params: { phone: ownerPhone } })
+    .then(({ data }) => setFamilyMembers(Array.isArray(data?.members) ? data.members : []))
+    .catch((error) => {
+      console.error('Unable to load family members:', error?.response?.data || error.message);
+      setFamilyMembers([]);
+    });
+}, [effectiveClient?._id, effectiveClient?.phone, mode]);
+
+
+useEffect(() => {
+  if (mode !== 'create' || !effectiveClient?._id) return;
+  const requested = new URLSearchParams(window.location.search)
+    .get('familyClientIds')
+    ?.split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!requested?.length) return;
+  const allowed = new Set([String(effectiveClient._id), ...familyMembers.map((member) => String(member._id))]);
+  const valid = Array.from(new Set(requested.filter((id) => allowed.has(String(id))))).slice(0, 2);
+  if (valid.length) {
+    setSelectedBookingClientIds(valid);
+    setActiveFamilyBookingIndex(0);
+    setFamilyBookingDrafts([]);
+    setFamilyStepSelections({});
+    setShowFamilyBookingPanel(true);
+  }
+}, [mode, effectiveClient?._id, familyMembers]);
+
+const activeBookingClientId = mode === 'create'
+  ? (selectedBookingClientIds[activeFamilyBookingIndex] || selectedBookingClientIds[0] || effectiveClient?._id)
+  : effectiveClient?._id;
+
+const familyBookingPeople = [
+  ...(effectiveClient?._id ? [{ ...effectiveClient, relationship: 'self' }] : []),
+  ...familyMembers,
+];
+const activeBookingPerson = familyBookingPeople.find((person) => String(person._id) === String(activeBookingClientId)) || effectiveClient;
+
+const firstFamilyBookingBlock = useMemo(() => {
+  if (!familyBookingDrafts.length) return null;
+  const firstClientId = String(selectedBookingClientIds[0] || '');
+  const rows = familyBookingDrafts.filter((draft) => String(draft.clientId || '') === firstClientId);
+  if (!rows.length) return null;
+  const date = rows[0].date;
+  const startMinutes = Math.min(...rows.map((row) => timeToMinutes(row.time)));
+  const endMinutes = Math.max(...rows.map((row) => timeToMinutes(row.time) + Number(row.duration || 0)));
+  const workerIds = new Set(rows.map((row) => String(row.workerId || '')).filter(Boolean));
+  const toTime = (minutes) => `${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  return { date, startTime: toTime(startMinutes), endTime: toTime(endMinutes), workerIds };
+}, [familyBookingDrafts, selectedBookingClientIds]);
+
+const familyTogetherMode = selectedBookingClientIds.length > 1 && familyScheduleMode !== 'individual';
+
+const toggleBookingPerson = (clientId) => {
+  const id = String(clientId || '');
+  if (!id) return;
+  setSelectedBookingClientIds((currentIds) => {
+    let nextIds = currentIds;
+    if (currentIds.includes(id)) {
+      if (currentIds.length === 1) {
+        toast.info('Select at least one person for this appointment.');
+        return currentIds;
+      }
+      nextIds = currentIds.filter((value) => value !== id);
+    } else {
+      if (currentIds.length >= 2) {
+        toast.info('Online family booking is limited to two people at a time. Please call for a larger group.');
+        return currentIds;
+      }
+      nextIds = [...currentIds, id];
+    }
+    setActiveFamilyBookingIndex(0);
+    setFamilyBookingDrafts([]);
+    setFamilyStepSelections({});
+    if (nextIds.length < 2) setFamilyScheduleMode('individual');
+    return nextIds;
+  });
+};
+
+const addFamilyMember = async () => {
+  if (familySaving) return;
+  const firstName = String(familyMemberForm.firstName || '').trim();
+  const lastName = String(familyMemberForm.lastName || '').trim();
+  const phone = String(familyMemberForm.phone || '').replace(/\D/g, '').slice(-10);
+  if (!firstName || !lastName || phone.length !== 10) {
+    toast.error('Enter the family member’s name and a valid 10-digit phone number.');
+    return;
+  }
+  setFamilySaving(true);
+  try {
+    const { data } = await API.post(`/clients/${effectiveClient._id}/family`, {
+      ownerPhone: effectiveClient.phone,
+      firstName,
+      lastName,
+      memberPhone: phone,
+      relationship: familyMemberForm.relationship || 'family',
+    });
+    const member = data?.member;
+    if (member?._id) {
+      setFamilyMembers((members) => {
+        const withoutDuplicate = members.filter((item) => String(item._id) !== String(member._id));
+        return [...withoutDuplicate, member];
+      });
+      setSelectedBookingClientIds((ids) => Array.from(new Set([...ids, String(member._id)])).slice(0, 2));
+    }
+    setFamilyMemberForm({ firstName: '', lastName: '', phone: '', relationship: 'family' });
+    setShowAddFamilyMember(false);
+    toast.success(data?.created ? 'Family member added and selected.' : 'Existing client linked and selected.');
+  } catch (error) {
+    toast.error(error?.response?.data?.error || 'Could not add the family member.');
+  } finally {
+    setFamilySaving(false);
+  }
+};
+
 useEffect(() => {
   API.get('/booking-status')
     .then(({ data }) => {
@@ -214,6 +353,7 @@ useEffect(() => {
         futureNotices: Array.isArray(data?.futureNotices) ? data.futureNotices : [],
         promotions: Array.isArray(data?.promotions) ? data.promotions : [],
         storeStatus: data?.storeStatus || null,
+        shopMode: data?.shopMode || null,
       });
     })
     .catch((error) => {
@@ -221,10 +361,18 @@ useEffect(() => {
     });
 }, []);
 
-const relationshipStylistId = useMemo(() => relationshipStylistIdFor(effectiveClient), [effectiveClient]);
-const assignedStylistId = useMemo(() => idOf(effectiveClient?.assignedStylistId), [effectiveClient]);
-const preferredStylistId = useMemo(() => idOf(effectiveClient?.preferredStylistId), [effectiveClient]);
-const lastStylistId = useMemo(() => idOf(effectiveClient?.lastStylistId), [effectiveClient]);
+const effectiveSingleStylist = Boolean(bookingStatus?.shopMode?.effectiveSingleStylist);
+const relationshipStylistId = useMemo(() => relationshipStylistIdFor(activeBookingPerson), [activeBookingPerson]);
+useEffect(() => {
+  if (effectiveSingleStylist && ['together-auto', 'together-same'].includes(familyScheduleMode)) {
+    setFamilyScheduleMode('together-back-to-back');
+    toast.info('Only one stylist is available, so family appointments will be scheduled back-to-back.');
+  }
+}, [effectiveSingleStylist, familyScheduleMode]);
+
+const assignedStylistId = useMemo(() => idOf(activeBookingPerson?.assignedStylistId), [activeBookingPerson]);
+const preferredStylistId = useMemo(() => idOf(activeBookingPerson?.preferredStylistId), [activeBookingPerson]);
+const lastStylistId = useMemo(() => idOf(activeBookingPerson?.lastStylistId), [activeBookingPerson]);
 
   useEffect(() => {
     Promise.all([
@@ -276,9 +424,9 @@ const current = useMemo(() => {
   const addOnIds = selectedAddOns.length
     ? selectedAddOns.map(a => a._id)
     : (baseline?.addOnIds || []);
-  const clientId = effectiveClient?._id || baseline?.clientId || null;
+  const clientId = (mode === 'create' ? activeBookingClientId : effectiveClient?._id) || baseline?.clientId || null;
   return { clientId, serviceId: svcId, workerId, date, time, addOnIds };
-}, [selectedService, selectedWorker, selectedDate, selectedTime, selectedAddOns, baseline, effectiveClient?._id]);
+}, [selectedService, selectedWorker, selectedDate, selectedTime, selectedAddOns, baseline, effectiveClient?._id, mode, activeBookingClientId]);
 
 const isEdit = mode === 'edit' && !!baseline;
 
@@ -296,7 +444,10 @@ const changed = useMemo(() => {
 }, [isEdit, baseline, current]);
 
 // Validity and button state
-const maxServiceLimit = [1, 2, 3, 4].includes(Number(bookingSettings.maxOnlineServicesPerVisit)) ? Number(bookingSettings.maxOnlineServicesPerVisit) : 2;
+// Online client and family booking is capped at two services per person.
+// Runtime settings may further lower this limit, but can never raise it above two.
+const configuredServiceLimit = Number(bookingSettings.maxOnlineServicesPerVisit);
+const maxServiceLimit = configuredServiceLimit === 1 ? 1 : 2;
 const basketServiceCount = mode === 'create' ? serviceBasket.length : (current.serviceId ? 1 : 0);
 const basketTotalDuration = mode === 'create'
   ? serviceBasket.reduce((sum, item) => sum + basketItemDuration(item), 0)
@@ -463,29 +614,84 @@ useEffect(() => {
 }, [selectedDate]);
 
 useEffect(() => {
+  const requestId = ++availabilityRequestRef.current;
+  let cancelled = false;
+
   if (calendarStatus?.storeClosed || calendarStatus?.onlineBookingOff) {
     setAvailableTimes([]);
     setSelectedTime(null);
-    return;
+    return () => { cancelled = true; };
   }
 
-  if (primaryService && selectedDate && (!workerRequired || selectedWorker)) {
-    const extra = selectedAddOns.reduce((sum, a) => sum + (a.duration || 0), 0);
-    const singleDuration = (selectedWorker?.duration || primaryService.duration || 0) + extra;
-    const totalDuration = mode === 'create' ? basketTotalDuration : singleDuration;
-
-   const params = { date: selectedDate, serviceId: primaryService._id, duration: totalDuration };
-   if (selectedWorker?._id) params.workerId = selectedWorker._id;
- if (isEdit && editingAppointment) params.excludeId = getEditingId(editingAppointment);
- API.get('/availability', { params })
-      .then(({ data }) => {
-        const rows = Array.isArray(data) ? data : [];
-        const mapped = rows.map(t => ({ time: t.time, available: t.status === 'free' }));
-        setAvailableTimes(mapped);
-      })
-      .catch(() => setAvailableTimes([]));
+  if (!(primaryService && selectedDate && (!workerRequired || selectedWorker))) {
+    setAvailableTimes([]);
+    return () => { cancelled = true; };
   }
-}, [primaryService, selectedWorker, workerRequired, selectedDate, selectedAddOns, basketTotalDuration, mode, isEdit, editingAppointment, calendarStatus, availabilityRefreshKey]);
+
+  const extra = selectedAddOns.reduce((sum, a) => sum + (Number(a.duration) || 0), 0);
+  const singleDuration = (Number(selectedWorker?.duration) || Number(primaryService.duration) || 0) + extra;
+  const totalDuration = Math.max(1, Number(mode === 'create' ? basketTotalDuration : singleDuration) || singleDuration || 60);
+  const params = { date: selectedDate, serviceId: primaryService._id, duration: totalDuration };
+  if (selectedWorker?._id) params.workerId = selectedWorker._id;
+  if (isEdit && editingAppointment) params.excludeId = getEditingId(editingAppointment);
+
+  API.get('/availability', { params })
+    .then(({ data }) => {
+      if (cancelled || requestId !== availabilityRequestRef.current) return;
+      const rows = Array.isArray(data) ? data : [];
+      const mapped = rows.map((t) => {
+        let available = t.status === 'free';
+        if (available && familyBookingDrafts.length > 0 && selectedDate && selectedWorker?._id) {
+          const candidateStart = timeToMinutes(t.time);
+          const candidateEnd = candidateStart + totalDuration;
+          available = !familyBookingDrafts.some((draft) => {
+            if (String(draft.workerId || '') !== String(selectedWorker._id || '')) return false;
+            if (String(draft.date || '') !== String(selectedDate || '')) return false;
+            const draftStart = timeToMinutes(draft.time);
+            const draftEnd = draftStart + Number(draft.duration || 0);
+            return candidateStart < draftEnd && candidateEnd > draftStart;
+          });
+        }
+        if (available && familyTogetherMode && activeFamilyBookingIndex > 0 && firstFamilyBookingBlock) {
+          const differentStylist = !firstFamilyBookingBlock.workerIds.has(String(selectedWorker?._id || ''));
+          const sameTimeAllowed = differentStylist && t.time === firstFamilyBookingBlock.startTime;
+          const backToBackAllowed = t.time === firstFamilyBookingBlock.endTime;
+          if (familyScheduleMode === 'together-same') available = sameTimeAllowed;
+          else if (familyScheduleMode === 'together-back-to-back') available = backToBackAllowed;
+          else available = sameTimeAllowed || backToBackAllowed;
+        }
+        return { time: t.time, available, status: t.status, reason: t.reason || '' };
+      });
+      setAvailableTimes(mapped);
+      setSelectedTime((current) => current && !mapped.some((row) => row.available && row.time === current) ? null : current);
+    })
+    .catch(() => {
+      if (!cancelled && requestId === availabilityRequestRef.current) setAvailableTimes([]);
+    });
+
+  return () => { cancelled = true; };
+}, [primaryService, selectedWorker, workerRequired, selectedDate, selectedAddOns, basketTotalDuration, mode, isEdit, editingAppointment, calendarStatus, availabilityRefreshKey, familyBookingDrafts, familyTogetherMode, familyScheduleMode, activeFamilyBookingIndex, firstFamilyBookingBlock]);
+
+
+useEffect(() => {
+  if (!familyTogetherMode || activeFamilyBookingIndex === 0 || !firstFamilyBookingBlock) return;
+  if (selectedDate !== firstFamilyBookingBlock.date) setSelectedDate(firstFamilyBookingBlock.date);
+}, [familyTogetherMode, activeFamilyBookingIndex, firstFamilyBookingBlock, selectedDate]);
+
+useEffect(() => {
+  if (!familyTogetherMode || activeFamilyBookingIndex === 0 || !firstFamilyBookingBlock || !selectedWorker?._id) return;
+  const freeTimes = availableTimes.filter((row) => row.available).map((row) => row.time);
+  if (!freeTimes.length || (selectedTime && freeTimes.includes(selectedTime))) return;
+  const differentStylist = !firstFamilyBookingBlock.workerIds.has(String(selectedWorker._id));
+  const preferred = familyScheduleMode === 'together-back-to-back'
+    ? firstFamilyBookingBlock.endTime
+    : familyScheduleMode === 'together-same'
+      ? firstFamilyBookingBlock.startTime
+      : (differentStylist && freeTimes.includes(firstFamilyBookingBlock.startTime)
+          ? firstFamilyBookingBlock.startTime
+          : firstFamilyBookingBlock.endTime);
+  if (freeTimes.includes(preferred)) setSelectedTime(preferred);
+}, [familyTogetherMode, familyScheduleMode, activeFamilyBookingIndex, firstFamilyBookingBlock, selectedWorker, availableTimes, selectedTime]);
 
 
   const handleServiceClick = async (service) => {
@@ -684,9 +890,86 @@ const resetForAnotherSeparateService = () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
+const captureFamilyStepSelection = () => ({
+  selectedCategory,
+  selectedService,
+  selectedWorker,
+  availableWorkers,
+  showStylistOptions,
+  relationshipStylistUnavailable,
+  selectedDate,
+  selectedTime,
+  availableTimes,
+  addOns,
+  selectedAddOns,
+  serviceBasket,
+  activeBasketItemId,
+  couponCode,
+  couponResult,
+});
+
+const restoreFamilyStepSelection = (snapshot, preferredDate = null) => {
+  if (!snapshot) {
+    resetForNextFamilyMember(preferredDate);
+    return;
+  }
+  setSelectedCategory(snapshot.selectedCategory || null);
+  setSelectedService(snapshot.selectedService || null);
+  setSelectedWorker(snapshot.selectedWorker || null);
+  setAvailableWorkers(Array.isArray(snapshot.availableWorkers) ? snapshot.availableWorkers : []);
+  setShowStylistOptions(Boolean(snapshot.showStylistOptions));
+  setRelationshipStylistUnavailable(Boolean(snapshot.relationshipStylistUnavailable));
+  setSelectedDate(snapshot.selectedDate || preferredDate || null);
+  setSelectedTime(snapshot.selectedTime || null);
+  setAvailableTimes(Array.isArray(snapshot.availableTimes) ? snapshot.availableTimes : []);
+  setAddOns(Array.isArray(snapshot.addOns) ? snapshot.addOns : []);
+  setSelectedAddOns(Array.isArray(snapshot.selectedAddOns) ? snapshot.selectedAddOns : []);
+  setServiceBasket(Array.isArray(snapshot.serviceBasket) ? snapshot.serviceBasket : []);
+  setActiveBasketItemId(snapshot.activeBasketItemId || null);
+  setShowAddOnModal(false);
+  setCouponCode(snapshot.couponCode || '');
+  setCouponResult(snapshot.couponResult || null);
+  setBookingCompleteNotice(null);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+const goToPreviousFamilyMember = () => {
+  if (activeFamilyBookingIndex <= 0 || isSubmitting) return;
+  const currentId = String(activeBookingClientId || '');
+  const previousIndex = activeFamilyBookingIndex - 1;
+  const previousId = String(selectedBookingClientIds[previousIndex] || '');
+  const currentSnapshot = captureFamilyStepSelection();
+  setFamilyStepSelections((existing) => ({ ...existing, [currentId]: currentSnapshot }));
+  setActiveFamilyBookingIndex(previousIndex);
+  restoreFamilyStepSelection(familyStepSelections[previousId], firstFamilyBookingBlock?.date || null);
+};
+
+const resetForNextFamilyMember = (preferredDate = null) => {
+  setSelectedCategory(null);
+  setSelectedService(null);
+  setSelectedWorker(null);
+  setAvailableWorkers([]);
+  setShowStylistOptions(false);
+  setRelationshipStylistUnavailable(false);
+  // Start the next family member on the first person's selected day in every family mode.
+  // Flexible mode may still change the date; coordinated modes remain locked by their existing rules.
+  setSelectedDate(preferredDate || (firstFamilyBookingBlock ? firstFamilyBookingBlock.date : null));
+  setSelectedTime(null);
+  setAvailableTimes([]);
+  setAddOns([]);
+  setSelectedAddOns([]);
+  setServiceBasket([]);
+  setActiveBasketItemId(null);
+  setShowAddOnModal(false);
+  setCouponCode('');
+  setCouponResult(null);
+  setBookingCompleteNotice(null);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
 const finishOrContinueAfterCreate = () => {
   const max = Number(bookingSettings.maxOnlineServicesPerVisit || 2);
-  const safeMax = [1, 2, 3, 4].includes(max) ? max : 2;
+  const safeMax = max === 1 ? 1 : 2;
   const nextCount = separateServiceCount + 1;
   const reachedLimit = nextCount >= safeMax;
   const remaining = Math.max(0, safeMax - nextCount);
@@ -823,7 +1106,104 @@ const handleSubmit = async () => {
     }
    console.log('[client post] /appointments payload =', payload);
 
-    // Create / Rebook
+    // Family booking is completed person-by-person. Nothing is posted until the final person is ready.
+    if (mode === 'create' && selectedBookingClientIds.length > 1) {
+      let cursorTime = current.time;
+      const currentPersonAppointments = serviceBasket.length > 1
+        ? serviceBasket.map((item) => {
+            const itemDuration = basketItemDuration(item);
+            const row = {
+              ...payload,
+              clientId: activeBookingClientId,
+              serviceId: item.service._id,
+              service: item.service.name,
+              time: cursorTime,
+              duration: itemDuration,
+              addOns: (item.addOns || []).map((a) => a._id),
+              bookingFlags: ['online_family_booking', `family_schedule_${familyScheduleMode}`],
+            };
+            cursorTime = addMinutesToTime(cursorTime, itemDuration);
+            return row;
+          })
+        : [{ ...payload, clientId: activeBookingClientId, bookingFlags: ['online_family_booking', `family_schedule_${familyScheduleMode}`] }];
+
+      if (activeFamilyBookingIndex > 0 && familyTogetherMode && firstFamilyBookingBlock) {
+        const currentStart = currentPersonAppointments[0]?.time;
+        const currentWorkerId = String(currentPersonAppointments[0]?.workerId || '');
+        const differentStylist = !firstFamilyBookingBlock.workerIds.has(currentWorkerId);
+        const validSameTime = differentStylist && currentStart === firstFamilyBookingBlock.startTime;
+        const validBackToBack = currentStart === firstFamilyBookingBlock.endTime;
+        const validArrangement = familyScheduleMode === 'together-same'
+          ? validSameTime
+          : familyScheduleMode === 'together-back-to-back'
+            ? validBackToBack
+            : (validSameTime || validBackToBack);
+        if (!validArrangement || current.date !== firstFamilyBookingBlock.date) {
+          toast.error('Choose one of the available together-booking times: the same start time with a different stylist, or the exact next time after the first appointment.');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      const activeClientKey = String(activeBookingClientId || '');
+      const previousRowsForActiveClient = familyBookingDrafts.filter((draft) => String(draft.clientId || '') === activeClientKey);
+      const nextDrafts = [
+        ...familyBookingDrafts.filter((draft) => String(draft.clientId || '') !== activeClientKey),
+        ...currentPersonAppointments,
+      ];
+      const currentSnapshot = captureFamilyStepSelection();
+      const isLastFamilyMember = activeFamilyBookingIndex >= selectedBookingClientIds.length - 1;
+
+      if (!isLastFamilyMember) {
+        const nextIndex = activeFamilyBookingIndex + 1;
+        const nextId = String(selectedBookingClientIds[nextIndex] || '');
+        let nextSnapshot = familyStepSelections[nextId] || null;
+
+        // When the first person's coordinated block changes, the next person's old time
+        // may no longer be valid. Preserve their service choices but require a fresh time review.
+        if (activeFamilyBookingIndex === 0 && familyTogetherMode && nextSnapshot) {
+          const oldSignature = previousRowsForActiveClient.map((row) => `${row.date}|${row.time}|${row.duration}|${row.workerId || ''}`).join(';');
+          const newSignature = currentPersonAppointments.map((row) => `${row.date}|${row.time}|${row.duration}|${row.workerId || ''}`).join(';');
+          if (oldSignature && oldSignature !== newSignature) {
+            nextSnapshot = {
+              ...nextSnapshot,
+              selectedDate: currentPersonAppointments[0]?.date || nextSnapshot.selectedDate,
+              selectedTime: null,
+              availableTimes: [],
+            };
+            toast.info('The first appointment changed. Please review the next family member’s time.');
+          }
+        }
+
+        setFamilyBookingDrafts(nextDrafts);
+        setFamilyStepSelections((existing) => ({
+          ...existing,
+          [activeClientKey]: currentSnapshot,
+          ...(nextSnapshot ? { [nextId]: nextSnapshot } : {}),
+        }));
+        setActiveFamilyBookingIndex(nextIndex);
+        const firstSelectedFamilyDate = nextDrafts.find((draft) =>
+          String(draft.clientId || '') === String(selectedBookingClientIds[0] || '')
+        )?.date || nextDrafts[0]?.date || null;
+        restoreFamilyStepSelection(nextSnapshot, firstSelectedFamilyDate);
+        const nextPerson = familyBookingPeople.find((person) => String(person._id) === nextId);
+        toast.success(`${nextPerson?.firstName || 'Next family member'} is next. The first appointment date is preselected as a starting point; you may change it in flexible mode.`);
+        setIsSubmitting(false);
+        return;
+      }
+
+      await API.post('/appointments/batch', {
+        appointments: nextDrafts,
+        bookingOwnerClientId: effectiveClient?._id,
+        bookingOwnerPhone: effectiveClient?.phone,
+      });
+      toast.success('Family appointments submitted together for salon confirmation');
+      clearOnlineBookingCount();
+      persistClientForDashboard();
+      window.location.replace('/booking/dashboard');
+      return;
+    }
+
     if (mode === 'create' && serviceBasket.length > 1) {
       let cursorTime = current.time;
       const appointments = serviceBasket.map((item) => {
@@ -1109,6 +1489,143 @@ return (
 
       </div>
 
+      {mode === 'create' && effectiveClient?._id && (
+        <div className="mx-1 mt-2">
+          {!showFamilyBookingPanel ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowFamilyBookingPanel(true)}
+                className="relative flex h-11 w-11 items-center justify-center rounded-full border border-blue-200 bg-white shadow-sm transition hover:border-blue-400 hover:shadow"
+                aria-label="Book for or manage family members"
+                title="Book for family"
+              >
+                <img src={familyHubIcon} alt="" className="h-8 w-8 object-contain" />
+                {selectedBookingClientIds.length > 1 && (
+                  <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-yellow-400 px-1 text-center text-[10px] font-bold leading-[18px] text-gray-900">
+                    {selectedBookingClientIds.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          ) : (
+            <section className="rounded-lg border border-blue-200 bg-blue-50 p-3 shadow-sm">
+              <div className="mb-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (familyBookingDrafts.length > 0) {
+                      toast.info('Finish or go back before closing family booking.');
+                      return;
+                    }
+                    setShowFamilyBookingPanel(false);
+                  }}
+                  className="rounded border border-blue-200 bg-white px-2 py-1 text-xs font-semibold text-blue-700"
+                >
+                  Hide family options
+                </button>
+              </div>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-blue-900">Who is this booking for?</h3>
+              <p className="text-xs text-blue-700">Select one or two people. Each person can have a different service and stylist. Choose whether their appointments are independent or coordinated together.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAddFamilyMember((value) => !value)}
+              className="shrink-0 rounded border border-blue-300 bg-white px-2 py-1 text-xs font-semibold text-blue-700"
+            >
+              + Family member
+            </button>
+          </div>
+
+          {selectedBookingClientIds.length > 1 && (
+            <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">
+              Booking {Math.min(activeFamilyBookingIndex + 1, selectedBookingClientIds.length)} of {selectedBookingClientIds.length} for <strong>{familyBookingPeople.find((person) => String(person._id) === String(activeBookingClientId))?.firstName || 'family member'}</strong>.
+              {familyBookingDrafts.length > 0 && <span> The previous person’s choices are saved and will be submitted together at the end.</span>}
+            </div>
+          )}
+
+          {selectedBookingClientIds.length > 1 && familyBookingDrafts.length === 0 && (
+            <div className="mt-2 rounded border border-blue-200 bg-white p-2">
+              <div className="text-xs font-semibold text-blue-900">How should the family appointments be scheduled?</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'individual' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'individual'} onChange={() => setFamilyScheduleMode('individual')} />
+                  <strong>Flexible individual times</strong><br />Choose any available date and time for each person.
+                </label>
+                {!effectiveSingleStylist && <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'together-auto' ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'together-auto'} onChange={() => setFamilyScheduleMode('together-auto')} />
+                  <strong>Book together — best fit</strong><br />Same time with different available stylists; otherwise back-to-back.
+                </label>}
+                {!effectiveSingleStylist && <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'together-same' ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'together-same'} onChange={() => setFamilyScheduleMode('together-same')} />
+                  <strong>Same start time</strong><br />Requires different stylists who are both available.
+                </label>}
+                {effectiveSingleStylist && (
+                  <div className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800">
+                    One stylist is available. Family appointments can be booked back-to-back or at separate times.
+                  </div>
+                )}
+                <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'together-back-to-back' ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'together-back-to-back'} onChange={() => setFamilyScheduleMode('together-back-to-back')} />
+                  <strong>Back-to-back</strong><br />The second appointment starts when the first one ends.
+                </label>
+              </div>
+            </div>
+          )}
+
+          {familyTogetherMode && activeFamilyBookingIndex > 0 && firstFamilyBookingBlock && (
+            <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Together booking is locked to <strong>{firstFamilyBookingBlock.date}</strong>. Available times are limited to <strong>{format24To12(firstFamilyBookingBlock.startTime)}</strong> with a different stylist or <strong>{format24To12(firstFamilyBookingBlock.endTime)}</strong> back-to-back, according to the selected mode.
+            </div>
+          )}
+
+          <div className="mt-2 flex flex-wrap gap-2">
+            {familyBookingPeople.map((person) => {
+              const personId = String(person._id || '');
+              const selected = selectedBookingClientIds.includes(personId);
+              return (
+                <button
+                  type="button"
+                  key={personId}
+                  onClick={() => toggleBookingPerson(personId)}
+                  disabled={familyBookingDrafts.length > 0}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold disabled:opacity-60 ${selected ? (personId === String(activeBookingClientId) ? 'border-green-600 bg-green-600 text-white' : 'border-blue-600 bg-blue-600 text-white') : 'border-blue-200 bg-white text-blue-800'}`}
+                >
+                  {person.relationship === 'self' ? 'Me — ' : ''}{person.firstName} {person.lastName}
+                  {person.relationship && person.relationship !== 'self' && person.relationship !== 'family' ? ` (${person.relationship})` : ''}
+                </button>
+              );
+            })}
+          </div>
+
+          {showAddFamilyMember && (
+            <div className="mt-3 grid grid-cols-1 gap-2 rounded border border-blue-200 bg-white p-2 sm:grid-cols-2">
+              <input className="rounded border p-2 text-sm" placeholder="First name" value={familyMemberForm.firstName} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, firstName: e.target.value }))} />
+              <input className="rounded border p-2 text-sm" placeholder="Last name" value={familyMemberForm.lastName} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, lastName: e.target.value }))} />
+              <input className="rounded border p-2 text-sm" inputMode="tel" placeholder="10-digit phone" value={familyMemberForm.phone} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, phone: e.target.value }))} />
+              <select className="rounded border p-2 text-sm" value={familyMemberForm.relationship} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, relationship: e.target.value }))}>
+                <option value="family">Family</option>
+                <option value="spouse">Spouse</option>
+                <option value="child">Child</option>
+                <option value="parent">Parent</option>
+                <option value="sibling">Sibling</option>
+              </select>
+              <div className="flex gap-2 sm:col-span-2">
+                <button type="button" disabled={familySaving} onClick={addFamilyMember} className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {familySaving ? 'Adding…' : 'Add and select'}
+                </button>
+                <button type="button" onClick={() => setShowAddFamilyMember(false)} className="rounded border px-3 py-2 text-sm">Cancel</button>
+              </div>
+            </div>
+          )}
+
+            </section>
+          )}
+        </div>
+      )}
+
       {scheduleNoticeCount > 0 && (
         <details className="mx-1 mt-2 rounded-lg border border-gray-200 bg-white shadow-sm">
           <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-gray-700">
@@ -1350,7 +1867,7 @@ return (
         </div>
       </div>
 
-      {selectedService && (
+      {selectedService && !effectiveSingleStylist && (
         <div className="mt-4 rounded border bg-white p-3">
           <div className="mb-2 flex items-center justify-between gap-3">
             <div>
@@ -1445,8 +1962,10 @@ return (
       <div className="flex flex-row gap-4 items-start mt-4">
       <div className="border rounded shadow p-1 w-[300px] overflow-hidden">
           <FullCalendar
+            key={`family-calendar-${activeBookingClientId || 'self'}-${activeFamilyBookingIndex}`}
             plugins={[dayGridPlugin, interactionPlugin]}
             initialView="dayGridMonth"
+            initialDate={selectedDate || undefined}
  height="auto"
  contentHeight="auto"
  expandRows={false}            
@@ -1538,13 +2057,26 @@ dayCellClassNames={({ date }) => {
         )}
       </div>
 
-<div className="mt-4 flex justify-center gap-3">
+<div className="mt-4 flex flex-wrap justify-center gap-3">
+  {!bookingCompleteNotice && mode === 'create' && selectedBookingClientIds.length > 1 && activeFamilyBookingIndex > 0 && (
+    <button
+      type="button"
+      onClick={goToPreviousFamilyMember}
+      disabled={isSubmitting}
+      className="px-5 py-2 rounded border border-blue-300 bg-white text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+    >
+      ← Back to Previous Client
+    </button>
+  )}
+
   {!bookingCompleteNotice && (
   <button onClick={handleSubmit} disabled={!canSubmit || isSubmitting}
   className={`px-6 py-2 rounded text-white ${(!canSubmit || isSubmitting) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
   
     {mode === 'edit' ? 'Update Appointment'
       : mode === 'rebook' ? 'Rebook'
+      : mode === 'create' && selectedBookingClientIds.length > 1 && activeFamilyBookingIndex < selectedBookingClientIds.length - 1 ? 'Save & Continue to Next Person'
+      : mode === 'create' && selectedBookingClientIds.length > 1 ? 'Book Family Appointments'
       : mode === 'create' && serviceBasket.length > 1 ? 'Book Services' : 'Book Appointment'}
   </button>
   )}

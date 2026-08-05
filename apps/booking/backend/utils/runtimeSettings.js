@@ -179,6 +179,23 @@ const DEFAULT_RUNTIME_SETTINGS = [
     defaultValue: envString('ONLINE_BOOKING_DISABLED_MESSAGE', 'Online booking is temporarily unavailable. Please call Rakie Salon to schedule.'),
   },
   {
+    key: 'booking.shopMode',
+    type: 'string',
+    group: 'Booking Controls',
+    label: 'Shop stylist mode',
+    description: 'Auto hides stylist choices and multi-stylist scheduling when only one active online-bookable stylist exists. Use single to force the simplified one-stylist experience, or multi to force full stylist controls.',
+    defaultValue: envString('BOOKING_SHOP_MODE', 'auto'),
+  },
+  {
+    key: 'booking.primaryStylistId',
+    type: 'string',
+    group: 'Booking Controls',
+    label: 'Primary stylist ID',
+    description: 'Optional worker ID used when Shop stylist mode is forced to single. Leave blank in Auto mode; the only active online-bookable stylist is selected automatically.',
+    defaultValue: envString('BOOKING_PRIMARY_STYLIST_ID', ''),
+    isAdvanced: true,
+  },
+  {
     key: 'booking.online.maxServicesPerVisit',
     type: 'number',
     group: 'Booking Controls',

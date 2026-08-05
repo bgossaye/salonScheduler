@@ -78,6 +78,7 @@ const getAppointmentPriceDetails = (appt) => {
 export default function AdminAppointments() {
   const [appointments, setAppointments] = useState([]);
   const [workers, setWorkers] = useState([]);
+  const [effectiveSingleStylist, setEffectiveSingleStylist] = useState(false);
   const [filters, setFilters] = useState({ date: '', status: 'booked', client: '', workerId: '' });
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAppt, setSelectedAppt] = useState(null);
@@ -97,6 +98,12 @@ export default function AdminAppointments() {
 
 // Ensure backend is awake when landing directly on Admin (persisted sessions)
 useEffect(() => { wakeRender({ tag: 'admin-appointments' }); }, []);
+
+useEffect(() => {
+  API.get('/booking-status')
+    .then(({ data }) => setEffectiveSingleStylist(Boolean(data?.shopMode?.effectiveSingleStylist)))
+    .catch(() => setEffectiveSingleStylist(false));
+}, []);
 
 useEffect(() => {
   API.get('/admin/workers', { params: { active: true } })
@@ -322,7 +329,7 @@ const handleSave = async (form) => {
                   <div className="space-y-2 rounded border bg-gray-50 p-4 text-sm">
                     <p><strong>Client:</strong> {[appt.clientId?.firstName, appt.clientId?.lastName].filter(Boolean).join(' ') || 'N/A'}</p>
                     <p><strong>Service:</strong> {getAppointmentServiceName(appt)}</p>
-                    <p><strong>Stylist:</strong> {getWorkerName(appt)}</p>
+                    {!effectiveSingleStylist && <p><strong>Stylist:</strong> {getWorkerName(appt)}</p>}
                     <p><strong>Date:</strong> {formatDate(appt.date)}</p>
                     <p><strong>Time:</strong> {formatTime(appt.time)}{appt.duration ? ` · ${appt.duration} min` : ''}</p>
                     {remaining > 1 && (
@@ -394,16 +401,18 @@ const handleSave = async (form) => {
           onChange={(e) => setFilters({ ...filters, client: e.target.value })}
           className="border px-2 py-1"
         />
-        <select
-          value={filters.workerId}
-          onChange={(e) => setFilters({ ...filters, workerId: e.target.value })}
-          className="border px-2 py-1"
-        >
-          <option value="">All stylists</option>
-          {workers.map((worker) => (
-            <option key={worker._id} value={worker._id}>{worker.displayName || [worker.firstName, worker.lastName].filter(Boolean).join(' ')}</option>
-          ))}
-        </select>
+        {!effectiveSingleStylist && (
+          <select
+            value={filters.workerId}
+            onChange={(e) => setFilters({ ...filters, workerId: e.target.value })}
+            className="border px-2 py-1"
+          >
+            <option value="">All stylists</option>
+            {workers.map((worker) => (
+              <option key={worker._id} value={worker._id}>{worker.displayName || [worker.firstName, worker.lastName].filter(Boolean).join(' ')}</option>
+            ))}
+          </select>
+        )}
         <button
           onClick={() => { setSelectedAppt(null); setModalOpen(true); }}
           className="bg-blue-600 text-white px-4 py-2 ml-auto"
@@ -419,7 +428,7 @@ const handleSave = async (form) => {
             <th className="p-2 border">Time</th>
             <th className="p-2 border">Client</th>
             <th className="p-2 border">Service</th>
-            <th className="p-2 border">Stylist</th>
+            {!effectiveSingleStylist && <th className="p-2 border">Stylist</th>}
             <th className="p-2 border">Price</th>
             <th className="p-2 border">Add-ons</th>
             <th className="p-2 border">Actions</th>
@@ -638,7 +647,7 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
                   </span>
                 )}
               </td>
-              <td className="p-2 border text-center">
+              {!effectiveSingleStylist && <td className="p-2 border text-center">
                 <div className="font-medium">{workerName}</div>
                 {appt.workerTitle && <div className="text-xs text-gray-500">{appt.workerTitle}</div>}
                 {appt.oneTimeStylistChange && (
@@ -656,7 +665,7 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
                 {appt.groupBooking?.participantNotes && (
                   <div className="mt-1 text-[10px] text-purple-700">Group note: {appt.groupBooking.participantNotes}</div>
                 )}
-              </td>
+              </td>}
               <td className="p-2 border text-center">
                 {appointmentPrice.applied ? (
                   <div className="space-y-1">

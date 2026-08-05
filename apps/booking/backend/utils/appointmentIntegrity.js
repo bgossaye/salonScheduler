@@ -52,11 +52,11 @@ function normalizeAppointmentStatus(value) {
 }
 
 function isActiveAppointmentStatus(value) {
-  return !CANCELED_STATUSES.includes(normalizeAppointmentStatus(value));
+  return ACTIVE_STATUSES.includes(normalizeAppointmentStatus(value));
 }
 
 function activeStatusFilter() {
-  return { $nin: CANCELED_STATUSES };
+  return { $in: ACTIVE_STATUSES };
 }
 
 function publicConflictMessage() {

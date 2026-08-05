@@ -3,6 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import API from '../api';
 import { toast } from 'react-toastify';
 import logo from '../assets/TheRSlogo.png';
+import familyIcon from '../assets/family-hub.png';
+import FamilyHub from './FamilyHub';
 import {
   doesAppointmentQualifyForSpecial,
   getSpecialAppointmentBadgeText,
@@ -89,6 +91,8 @@ export default function ClientDashboard({ client }) {
   const [effectiveClient, setEffectiveClient] = useState(() => client || readStoredClient());
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showFamilyHub, setShowFamilyHub] = useState(false);
+  const [familySummary, setFamilySummary] = useState(null);
   const [bookingStatus, setBookingStatus] = useState({
     currentNotices: [],
     futureNotices: [],
@@ -140,6 +144,14 @@ export default function ClientDashboard({ client }) {
         setLoading(false);
       });
   }, [effectiveClient]);
+
+
+  useEffect(() => {
+    if (!effectiveClient?._id || !effectiveClient?.phone) return;
+    API.get(`/clients/${effectiveClient._id}/family/overview`, { params: { phone: effectiveClient.phone } })
+      .then(({ data }) => setFamilySummary(data?.summary || null))
+      .catch(() => setFamilySummary(null));
+  }, [effectiveClient?._id, effectiveClient?.phone]);
 
   const norm = (s) => (s || '').toLowerCase();
 
@@ -220,16 +232,7 @@ export default function ClientDashboard({ client }) {
     handleGoToSchedule();
   };
 
-  // Initial-load behavior: if there were NEVER active appointments → exit to schedule
-  useEffect(() => {
-    if (!loading && effectiveClient) {
-    if (activeAppointments.length === 0 && hadActiveAtLoadRef.current === false) {
-        toast.info('No active appointments. Let’s book one.');
-        const t = setTimeout(() => handleGoToSchedule(), 800);
-        return () => clearTimeout(t);
-      }
-    }
-  }, [loading, effectiveClient, activeAppointments.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Keep the dashboard available even when there are no appointments so clients can use My Family.
 
   const dashboardNotices = [
     ...bookingStatus.currentNotices.filter((notice) => !notice.onlineBookingOff),
@@ -329,6 +332,34 @@ export default function ClientDashboard({ client }) {
         </details>
       )}
 
+      {effectiveClient && (
+        <button
+          type="button"
+          onClick={() => setShowFamilyHub(true)}
+          className="mb-5 flex w-full items-center justify-between rounded-xl border border-blue-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-400 hover:shadow-md"
+        >
+          <span className="flex items-center gap-4">
+            <span className="relative">
+              <img src={familyIcon} alt="My Family" className="h-16 w-16 rounded-xl object-cover" />
+              {!!familySummary?.pendingCount && (
+                <span className="absolute -right-2 -top-2 min-w-6 rounded-full bg-yellow-400 px-1.5 py-0.5 text-center text-xs font-bold text-yellow-950">
+                  {familySummary.pendingCount}
+                </span>
+              )}
+            </span>
+            <span>
+              <span className="block text-lg font-bold text-gray-900">My Family</span>
+              <span className="block text-sm text-gray-600">
+                {familySummary
+                  ? `${familySummary.upcomingCount} upcoming • ${familySummary.pendingCount} pending • ${familySummary.withoutAppointmentCount} without appointment`
+                  : 'Appointments, booking, and family information'}
+              </span>
+            </span>
+          </span>
+          <span className="text-2xl text-blue-700">›</span>
+        </button>
+      )}
+
       {loading ? (
         <p>Loading appointments...</p>
       ) : !effectiveClient ? (
@@ -389,6 +420,13 @@ export default function ClientDashboard({ client }) {
             </section>
           )}
 
+          {activeAppointments.length === 0 && (
+            <section className="mb-6 rounded-xl bg-white p-5 text-center shadow-sm">
+              <p className="mb-3 text-gray-700">No active appointment.</p>
+              <button type="button" onClick={() => handleGoToSchedule()} className="rounded bg-blue-600 px-4 py-2 font-semibold text-white">Book an appointment</button>
+            </section>
+          )}
+
           {/* ===== Single Past appointment (read-only) ===== */}
           <section>
             <h3 className="text-lg font-semibold mb-3">Past appointment</h3>
@@ -424,6 +462,21 @@ export default function ClientDashboard({ client }) {
             )}
           </section>
         </>
+      )}
+
+      {showFamilyHub && effectiveClient && (
+        <FamilyHub
+          client={effectiveClient}
+          onClose={() => setShowFamilyHub(false)}
+          onBook={(clientIds) => {
+            setShowFamilyHub(false);
+            handleGoToSchedule({ familyClientIds: clientIds.join(',') });
+          }}
+          onEditAppointment={(appointment) => {
+            setShowFamilyHub(false);
+            handleEdit(appointment);
+          }}
+        />
       )}
 
       <img

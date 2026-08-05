@@ -30,6 +30,7 @@ const calcAddOnDuration = (addOns, selectedIds) =>
 export default function AppointmentFormModal({ isOpen, onClose, onSave, initialData }) {
   const phoneInputRef = useRef(null);
   const prevDateRef = useRef(''); // remember last accepted date to allow revert on cancel
+  const availabilityRequestRef = useRef(0);
 
   const [form, setForm] = useState({
     clientId: '',
@@ -63,6 +64,7 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
   const [, setDuplicatePhone] = useState(false);
   const [matchedClient, setMatchedClient] = useState(null);
   const [stylistSwitchRequest, setStylistSwitchRequest] = useState(null);
+  const [effectiveSingleStylist, setEffectiveSingleStylist] = useState(false);
   const [defaultStylistNoticeKey, setDefaultStylistNoticeKey] = useState('');
   const { promotionConfig } = usePromotionConfig();
   const shouldShowWorkerPromotion = promotionConfig.enabled && promotionConfig.showWorkerBadges;
@@ -155,6 +157,12 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
   };
 
   useEffect(() => {
+    API.get('/booking-status')
+      .then(({ data }) => setEffectiveSingleStylist(Boolean(data?.shopMode?.effectiveSingleStylist)))
+      .catch(() => setEffectiveSingleStylist(false));
+  }, []);
+
+  useEffect(() => {
     fetchClients();
     fetchServices();
     fetchStoreHours();
@@ -202,113 +210,88 @@ export default function AppointmentFormModal({ isOpen, onClose, onSave, initialD
       };
       setForm(normalized);
 
-      if (initialData.date && initialData.serviceId?._id) {
-        API.get('/availability', {
-          params: {
-            date: initialData.date,
-            serviceId: initialData.serviceId._id,
-            ...(initialData.workerId?._id || initialData.workerId ? { workerId: idOf(initialData.workerId) } : {})
-          }
-        }).then(res => setAvailableTimes(res.data))
-          .catch(err => console.error('Failed to fetch availability (edit open)', err));
-      }
     } else if (isOpen) {
       resetForm();
     }
   }, [isOpen, initialData]);
 
    useEffect(() => {
-    const fetchAvailability = async () => {
-      if (!form.date || !form.serviceId || !storeHours.length) return;
+    const requestId = ++availabilityRequestRef.current;
+    let cancelled = false;
 
-      const dateObj = new Date(form.date + 'T12:00:00'); // <- important to fix timezone issues
-      if (isNaN(dateObj)) return;
+    const fetchAvailability = async () => {
+      if (!form.date || !form.serviceId || !storeHours.length) {
+        if (!cancelled && requestId === availabilityRequestRef.current) setAvailableTimes([]);
+        return;
+      }
+
+      const dateObj = new Date(`${form.date}T12:00:00`);
+      if (Number.isNaN(dateObj.getTime())) return;
 
       const selectedDay = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-      const storeDay = storeHours.find(h => h.day === selectedDay);
+      const storeDay = storeHours.find((h) => h.day === selectedDay);
+      const duration = Math.max(1, Number(form.duration || 60));
 
-      let dateStatus = null;
       try {
-        const { data } = await API.get('/availability/status', { params: { date: form.date } });
-        dateStatus = data || null;
+        const params = {
+          date: form.date,
+          serviceId: form.serviceId,
+          duration,
+          ...(form.workerId ? { workerId: form.workerId } : {}),
+          ...(initialData?._id ? { excludeId: initialData._id } : {}),
+        };
+
+        const [statusResponse, availabilityResponse] = await Promise.all([
+          API.get('/availability/status', { params: { date: form.date } }),
+          API.get('/availability', { params }),
+        ]);
+
+        if (cancelled || requestId !== availabilityRequestRef.current) return;
+
+        const dateStatus = statusResponse?.data || null;
         setCalendarStatus(dateStatus);
-      } catch { setCalendarStatus(null); }
+        const backendRows = Array.isArray(availabilityResponse?.data) ? availabilityResponse.data : [];
+        const backendByTime = new Map(backendRows.map((row) => [String(row.time).slice(0, 5), row]));
 
-      // 🔁 Always show 5:00–24:00 for admin
-      const DAY_START_MIN = 6 * 60;     // 6:00 AM
-      const DAY_END_MIN   = 21 * 60;    // 9pm
-      const interval = 15;              // 15-minute blocks
-
-      // Compute active store window if any (and not closed)
-      let openMin = null;
-      let closeMin = null;
-      if (dateStatus?.storeClosed) {
-        openMin = null;
-        closeMin = null;
-      } else if (dateStatus?.hasSpecialHours && dateStatus.open && dateStatus.close) {
-        openMin = toMinutes(dateStatus.open);
-        closeMin = toMinutes(dateStatus.close);
-      } else if (storeDay && !storeDay.closed && storeDay.open && storeDay.close) {
-        openMin = toMinutes(storeDay.open);
-        closeMin = toMinutes(storeDay.close);
-      }
-
-      const duration = form.duration || 0;
-      const times = [];
-
-      // Generate the whole day from 5:00 → 24:00
-      for (let min = DAY_START_MIN; min + duration <= DAY_END_MIN; min += interval) {
-        const hours = String(Math.floor(min / 60)).padStart(2, '0');
-        const minutes = String(min % 60).padStart(2, '0');
-        const timeStr = `${hours}:${minutes}`;
-
-        const inStoreHours =
-          openMin !== null &&
-          closeMin !== null &&
-          min >= openMin &&
-          min + duration <= closeMin;
-
-        times.push({
-          time: timeStr,
-          status: 'free',
-          inStoreHours, // 🌈 used for coloring later
-        });
-      }
-
-      // fetch all appointments for that date
-      try {
-        const { data: appts } = await API.get('/admin/appointments', {
-          params: { date: form.date, ...(form.workerId ? { workerId: form.workerId } : {}) }
-        });
-
-        // filter to only active ones
-        const active = appts.filter(a => ['booked', 'pending'].includes(a.status));
-
-        // mark booked/overbooked slots
-        for (const appt of active) {
-          const startMin = toMinutes(appt.time);
-          const endMin = startMin + (appt.duration || 60);
-
-          for (const slot of times) {
-            const slotMin = toMinutes(slot.time);
-            const inRange = slotMin >= startMin && slotMin < endMin;
-            if (inRange) {
-              slot.count = (slot.count || 0) + 1;
-              slot.status = slot.count > 1 ? 'overbooked' : 'booked';
-            }
+        let openMin = null;
+        let closeMin = null;
+        if (!dateStatus?.storeClosed) {
+          if (dateStatus?.hasSpecialHours && dateStatus.open && dateStatus.close) {
+            openMin = toMinutes(dateStatus.open);
+            closeMin = toMinutes(dateStatus.close);
+          } else if (storeDay && !storeDay.closed && storeDay.open && storeDay.close) {
+            openMin = toMinutes(storeDay.open);
+            closeMin = toMinutes(storeDay.close);
           }
         }
-      } catch (err) {
-        console.error('Failed to fetch day appointments:', err);
-      }
 
-      setAvailableTimes(times);
+        const DAY_START_MIN = 6 * 60;
+        const DAY_END_MIN = 21 * 60;
+        const times = [];
+        for (let min = DAY_START_MIN; min + duration <= DAY_END_MIN; min += 15) {
+          const time = `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+          const backend = backendByTime.get(time);
+          const inStoreHours = openMin !== null && closeMin !== null && min >= openMin && min + duration <= closeMin;
+          times.push({
+            time,
+            status: backend?.status || 'closed',
+            reason: backend?.reason || '',
+            inStoreHours,
+          });
+        }
+
+        setAvailableTimes(times);
+      } catch (err) {
+        if (cancelled || requestId !== availabilityRequestRef.current) return;
+        console.error('Failed to fetch availability:', err);
+        setAvailableTimes([]);
+      }
     };
 
-    // ⏳ Slight delay to ensure latest state
-    const timer = setTimeout(fetchAvailability, 0);
-    return () => clearTimeout(timer);
-  }, [form.date, form.serviceId, form.workerId, form.duration, storeHours]);
+    fetchAvailability();
+    return () => { cancelled = true; };
+  }, [form.date, form.serviceId, form.workerId, form.duration, storeHours, initialData?._id]);
+
 
 
   const fetchClients = async () => {
@@ -726,6 +709,12 @@ const toMinutes = (t) => {
   };
 
   const selectedService = services.find((s) => s._id === form.serviceId);
+  useEffect(() => {
+    if (effectiveSingleStylist && workers.length === 1 && !form.workerId) {
+      setForm((current) => ({ ...current, workerId: idOf(workers[0]) }));
+    }
+  }, [effectiveSingleStylist, workers, form.workerId]);
+
   const selectedWorker = workers.find((w) => idOf(w) === idOf(form.workerId));
   const selectedAssignment = getWorkerAssignment(selectedWorker, form.serviceId);
   const selectedSpecialDeal = shouldShowWorkerPromotion ? getSpecialDealForService(selectedService, promotionConfig) : null;
@@ -1042,7 +1031,7 @@ const toMinutes = (t) => {
             )}
           </div>
 
-          {form.serviceId && (
+          {form.serviceId && !effectiveSingleStylist && (
             <div>
               <label className="block font-medium">Stylist / Worker</label>
               <select
@@ -1106,11 +1095,11 @@ const toMinutes = (t) => {
       let bgClass = '';
 
       if (status === 'overbooked') {
-        // overlapping bookings → pink
         bgClass = 'bg-pink-300 text-gray-900';
-      } else if (status === 'booked') {
-        // already booked → yellow
-        bgClass = 'bg-yellow-300 text-gray-900';
+      } else if (status === 'booked' || status === 'blocked') {
+        bgClass = 'bg-yellow-300 text-gray-900 cursor-not-allowed';
+      } else if (status === 'closed') {
+        bgClass = inStoreHours ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-green-50 hover:bg-green-100 text-gray-800';
       } else if (isInSelection) {
         // current selection window → stronger green
         bgClass = 'bg-green-200 text-gray-900';
@@ -1126,7 +1115,13 @@ const toMinutes = (t) => {
         <button
   key={time}
   type="button"
-  onClick={() => setForm(prev => ({ ...prev, time }))}
+  onClick={() => {
+    if (status === 'free' || (status === 'closed' && !inStoreHours)) {
+      setForm(prev => ({ ...prev, time }));
+    }
+  }}
+  disabled={status === 'booked' || status === 'blocked' || (status === 'closed' && inStoreHours)}
+  title={status === 'blocked' ? 'Unavailable' : status === 'booked' ? 'Conflicts with an active appointment' : ''}
   className={`
     m-0 w-full rounded border
     px-2 py-2 text-sm leading-tight

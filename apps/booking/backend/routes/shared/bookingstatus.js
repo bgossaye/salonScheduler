@@ -1,6 +1,7 @@
 const express = require('express');
 const StoreCalendarException = require('../../models/storecalendarexception');
 const StoreHours = require('../../models/storehours');
+const Worker = require('../../models/worker');
 const { getRuntimeBoolean, getRuntimeString } = require('../../utils/runtimeSettings');
 const { getPromotionDealsForPublic, isDealInDateWindow } = require('../../utils/promotions');
 
@@ -134,12 +135,14 @@ router.get('/', async (req, res) => {
     const today = businessDateInNewYork();
     const futureThrough = addDays(today, 60);
 
-    const [onlineEnabled, disabledMessage, exceptionRows, promotionConfig, storeHoursRows] = await Promise.all([
+    const [onlineEnabled, disabledMessage, shopModeRaw, primaryStylistId, exceptionRows, promotionConfig, storeHoursRows, onlineWorkers] = await Promise.all([
       getRuntimeBoolean('booking.online.enabled', true),
       getRuntimeString(
         'booking.online.disabledMessage',
         'Online booking is temporarily unavailable. Please call Rakie Salon to schedule.'
       ),
+      getRuntimeString('booking.shopMode', 'auto'),
+      getRuntimeString('booking.primaryStylistId', ''),
       StoreCalendarException.find({
         active: true,
         endDate: { $gte: today },
@@ -147,6 +150,10 @@ router.get('/', async (req, res) => {
       }).sort({ startDate: 1, endDate: 1, updatedAt: -1 }).lean(),
       getPromotionDealsForPublic(),
       StoreHours.find().lean(),
+      Worker.find({ active: true, showOnline: { $ne: false }, onlineBookable: { $ne: false } })
+        .sort({ isDefault: -1, bookingOrder: 1, displayName: 1 })
+        .select('_id displayName firstName lastName isDefault')
+        .lean(),
     ]);
 
     const currentNotices = [];
@@ -212,6 +219,15 @@ router.get('/', async (req, res) => {
 
     const bookingAvailable = onlineEnabled && !currentNotices.some((notice) => notice.onlineBookingOff);
     const storeStatus = buildStoreStatus(new Date(), storeHoursRows, exceptionRows);
+    const normalizedShopMode = ['single', 'multi'].includes(String(shopModeRaw || '').toLowerCase())
+      ? String(shopModeRaw).toLowerCase()
+      : 'auto';
+    const effectiveSingleStylist = normalizedShopMode === 'single'
+      || (normalizedShopMode === 'auto' && onlineWorkers.length <= 1);
+    const primaryWorker = onlineWorkers.find((worker) => String(worker._id) === String(primaryStylistId || ''))
+      || onlineWorkers.find((worker) => worker.isDefault)
+      || onlineWorkers[0]
+      || null;
 
     res.json({
       asOfDate: today,
@@ -220,6 +236,15 @@ router.get('/', async (req, res) => {
       currentNotices,
       futureNotices,
       promotions,
+      shopMode: {
+        configured: normalizedShopMode,
+        effectiveSingleStylist,
+        onlineStylistCount: onlineWorkers.length,
+        primaryStylist: primaryWorker ? {
+          _id: primaryWorker._id,
+          displayName: primaryWorker.displayName || [primaryWorker.firstName, primaryWorker.lastName].filter(Boolean).join(' '),
+        } : null,
+      },
     });
   } catch (err) {
     console.error('Failed to load public booking status:', err);

@@ -84,6 +84,14 @@ const clientSchema = new mongoose.Schema({
   preferredStylistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
   lastStylistId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
 
+  // Household/family links used by client-side family booking.
+  familyLinks: [{
+    clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', required: true },
+    relationship: { type: String, default: 'family' },
+    addedAt: { type: Date, default: Date.now },
+  }],
+  managedByClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', default: null, index: true },
+
   visitStats: {
     averageFrequencyWeeks: Number,
     lastVisit: Date,
