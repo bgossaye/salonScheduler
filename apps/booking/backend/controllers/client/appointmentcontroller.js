@@ -52,19 +52,61 @@ function publicSafeAppointmentQuery(base = {}) {
   };
 }
 
-async function appointmentClientMatches(existing, body = {}) {
-  const submittedClientId = String(body.clientId || body.client || '').trim();
-  const submittedPhone = phone10(body.phone || body.clientPhone || body.clientPhoneNumber || '');
-  if (!submittedClientId && !submittedPhone) return false;
+const MAX_ONLINE_ACTIVE_APPOINTMENTS_PER_CLIENT = 2;
 
-  const existingClientId = String(existing?.clientId?._id || existing?.clientId || '').trim();
-  if (submittedClientId && existingClientId && existingClientId === submittedClientId) return true;
+function activeOnlineAppointmentQuery(clientId) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return {
+    clientId,
+    status: { $in: ['pending', 'booked'] },
+    date: { $gte: today.toISOString().slice(0, 10) },
+    $or: [{ archivedAt: null }, { archivedAt: { $exists: false } }],
+  };
+}
 
-  if (submittedPhone && existingClientId) {
-    const client = await Client.findById(existingClientId).select('phone').lean();
-    return phone10(client?.phone || '') === submittedPhone;
+async function assertOnlineActiveAppointmentCapacity(clientId, additionalCount = 1) {
+  const activeCount = await Appointment.countDocuments(activeOnlineAppointmentQuery(clientId));
+  if (activeCount + Number(additionalCount || 0) > MAX_ONLINE_ACTIVE_APPOINTMENTS_PER_CLIENT) {
+    const err = new Error(`Online clients may have at most ${MAX_ONLINE_ACTIVE_APPOINTMENTS_PER_CLIENT} active appointments. Please contact the salon if another appointment is needed.`);
+    err.status = 403;
+    err.code = 'ONLINE_ACTIVE_APPOINTMENT_LIMIT';
+    err.activeAppointmentCount = activeCount;
+    err.maxActiveAppointments = MAX_ONLINE_ACTIVE_APPOINTMENTS_PER_CLIENT;
+    throw err;
   }
-  return false;
+  return activeCount;
+}
+
+async function clientAccessForTarget(req, targetClientId, action = 'view') {
+  const actorId = String(req.client?.id || '').trim();
+  const targetId = String(targetClientId || '').trim();
+  if (!actorId || !targetId) return false;
+  if (actorId === targetId) return true;
+
+  const owner = await Client.findById(actorId).select('familyLinks').lean();
+  const link = (owner?.familyLinks || []).find((item) =>
+    String(item.clientId || '') === targetId && String(item.status || 'active') === 'active'
+  );
+  if (!link) return false;
+
+  if (action === 'create') return link.permissions?.canBook !== false;
+  if (action === 'view') return link.permissions?.canViewUpcoming !== false;
+
+  // Editing/canceling another independent adult is intentionally more
+  // restrictive than simply being allowed to book/view for them. The family
+  // organizer may manage appointments they personally created for that member,
+  // and a guardian may manage a true minor dependent. Otherwise the relationship
+  // must explicitly grant cancellation/management authority.
+  if (action === 'manage' && req.params?.id) {
+    const appointment = await Appointment.findById(req.params.id).select('bookedByClientId').lean();
+    if (appointment?.bookedByClientId && String(appointment.bookedByClientId) === actorId) return true;
+  }
+  const target = await Client.findById(targetId).select('profileType guardianClientId').lean();
+  const guardianManagedMinor = target?.profileType === 'minor_dependent' &&
+    String(target?.guardianClientId || '') === actorId;
+  if (guardianManagedMinor) return true;
+  return link.permissions?.canCancel === true;
 }
 
 async function applyPublicStylistBookingRules(rawPayload = {}) {
@@ -277,17 +319,23 @@ exports.getClientAppointments = async (req, res) => {
     const { clientId, phone, limit } = req.query || {};
     const query = publicSafeAppointmentQuery({});
 
+    let targetClientId = '';
     if (clientId) {
-      query.clientId = clientId;
+      targetClientId = String(clientId);
     } else if (phone) {
       const p10 = phone10(phone);
       if (!p10) return res.json([]);
       const client = await Client.findOne({ phone: p10 }).select('_id').lean();
       if (!client) return res.json([]);
-      query.clientId = client._id;
+      targetClientId = String(client._id);
     } else {
       return res.status(400).json({ error: 'clientId or phone is required' });
     }
+
+    if (!(await clientAccessForTarget(req, targetClientId, 'view'))) {
+      return res.status(403).json({ error: 'You do not have permission to view these appointments.', code: 'CLIENT_APPOINTMENT_ACCESS_DENIED' });
+    }
+    query.clientId = targetClientId;
 
     const max = Math.min(Math.max(Number(limit || 50), 1), 100);
     const appointments = await Appointment.find(query)
@@ -333,6 +381,10 @@ exports.createAppointment = async (req, res) => {
     if (!clientId || !serviceId || !service || !date || !time) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    if (!(await clientAccessForTarget(req, clientId, 'create'))) {
+      return res.status(403).json({ error: 'You do not have permission to book for this client.', code: 'CLIENT_BOOKING_ACCESS_DENIED' });
+    }
+    await assertOnlineActiveAppointmentCapacity(clientId, 1);
 
     const calendarStatus = await resolveStoreCalendarStatus(date);
     if (calendarStatus.storeClosed) {
@@ -353,6 +405,7 @@ exports.createAppointment = async (req, res) => {
       // Every client-created online appointment starts as pending so salon staff
       // can verify the requested service, stylist, date, and time before confirming.
       status: 'pending',
+      bookedByClientId: req.client?.id || null,
     }));
 
     const [created] = await saveAppointmentsWithIntegrity([payload], { publicMessage: true });
@@ -381,6 +434,8 @@ exports.createAppointment = async (req, res) => {
     return res.status(err.status || 500).json({
       error: err.status && err.status < 500 ? err.message : 'Server error',
       code: err.code,
+      activeAppointmentCount: err.activeAppointmentCount,
+      maxActiveAppointments: err.maxActiveAppointments,
     });
   }
 };
@@ -424,23 +479,19 @@ exports.createAppointmentBatch = async (req, res) => {
       }
     }
 
-    if (isFamilyBooking) {
-      const ownerClientId = String(req.body?.bookingOwnerClientId || '').trim();
-      const ownerPhone = phone10(req.body?.bookingOwnerPhone || '');
-      const owner = ownerClientId
-        ? await Client.findById(ownerClientId).select('phone familyLinks').lean()
-        : null;
-      const allowedIds = new Set([
-        ownerClientId,
-        ...((owner?.familyLinks || []).map((link) => String(link.clientId || '')).filter(Boolean)),
-      ]);
-      const verified = !!owner && ownerPhone.length === 10 && phone10(owner.phone) === ownerPhone;
-      if (!verified || distinctClientIds.some((id) => !allowedIds.has(id))) {
+    const ownerClientId = String(req.client?.id || '').trim();
+    const submittedOwnerId = String(req.body?.bookingOwnerClientId || '').trim();
+    if (!ownerClientId || (submittedOwnerId && submittedOwnerId !== ownerClientId)) {
+      return res.status(403).json({ error: 'Please sign in again before booking.', code: 'ONLINE_FAMILY_AUTH_REQUIRED' });
+    }
+    for (const targetClientId of distinctClientIds) {
+      if (!(await clientAccessForTarget(req, targetClientId, 'create'))) {
         return res.status(403).json({
-          error: 'Every person in this online family booking must be linked to the signed-in family account.',
+          error: 'Every person in this online booking must be you or an active family member you are allowed to book for.',
           code: 'ONLINE_FAMILY_LINK_REQUIRED',
         });
       }
+      await assertOnlineActiveAppointmentCapacity(targetClientId, (rowsByClient.get(targetClientId) || []).length);
     }
 
     // Multiple services belonging to the same person form one continuous visit:
@@ -476,6 +527,7 @@ exports.createAppointmentBatch = async (req, res) => {
         // Multi-service online requests follow the same approval workflow as
         // single-service online requests: staff must confirm them in Admin.
         status: 'pending',
+        bookedByClientId: ownerClientId || null,
         bookingFlags: Array.from(new Set([
           ...((rows[i]?.bookingFlags || rows[i]?.flags || []).filter(Boolean)),
           isFamilyBooking ? 'online_family_booking' : 'online_multi_service_visit',
@@ -527,6 +579,8 @@ exports.createAppointmentBatch = async (req, res) => {
       error: err.status && err.status < 500 ? err.message : 'Server error',
       code: err.code,
       row: err.row,
+      activeAppointmentCount: err.activeAppointmentCount,
+      maxActiveAppointments: err.maxActiveAppointments,
     });
   }
 };
@@ -537,8 +591,8 @@ exports.updateAppointment = async (req, res) => {
     const existing = await Appointment.findById(id).lean();
     if (!existing) return res.status(404).json({ message: 'Appointment not found' });
 
-    if (!(await appointmentClientMatches(existing, req.body || {}))) {
-      return res.status(403).json({ error: 'This appointment does not belong to the submitted client.' });
+    if (!(await clientAccessForTarget(req, existing.clientId, 'manage'))) {
+      return res.status(403).json({ error: 'You do not have permission to edit this appointment.', code: 'CLIENT_APPOINTMENT_ACCESS_DENIED' });
     }
 
     const patch = allowedPublicUpdate(req.body || {});
@@ -593,8 +647,8 @@ exports.cancelAppointment = async (req, res) => {
     const existing = await Appointment.findById(req.params.id).lean();
     if (!existing) return res.status(404).json({ error: 'Appointment not found' });
 
-    if (!(await appointmentClientMatches(existing, req.body || {}))) {
-      return res.status(403).json({ error: 'This appointment does not belong to the submitted client.' });
+    if (!(await clientAccessForTarget(req, existing.clientId, 'manage'))) {
+      return res.status(403).json({ error: 'You do not have permission to cancel this appointment.', code: 'CLIENT_APPOINTMENT_ACCESS_DENIED' });
     }
 
     const updated = await Appointment.findByIdAndUpdate(

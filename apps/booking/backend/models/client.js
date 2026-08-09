@@ -3,8 +3,21 @@ const mongoose = require('mongoose');
 const clientSchema = new mongoose.Schema({
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
-  phone: { type: String, required: true, unique: true },
+  phone: { type: String, default: null, trim: true },
   email: { type: String, unique: true, sparse: true},
+
+  profileType: {
+    type: String,
+    enum: ['independent', 'minor_dependent', 'adult_dependent', 'admin_no_phone'],
+    default: 'independent',
+    index: true,
+  },
+  guardianClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', default: null, index: true },
+  relationshipToGuardian: { type: String, default: '' },
+  guardianAttestedAt: { type: Date, default: null },
+  createdByType: { type: String, enum: ['client', 'admin', 'staff', 'system'], default: 'system' },
+  createdById: { type: mongoose.Schema.Types.ObjectId, default: null },
+  phoneVerified: { type: Boolean, default: false },
   dob: { type: Date },
   nickname: { type: String, default: '' }, // 🔒 Admin-only field
 
@@ -88,7 +101,26 @@ const clientSchema = new mongoose.Schema({
   familyLinks: [{
     clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', required: true },
     relationship: { type: String, default: 'family' },
+    status: { type: String, enum: ['active', 'pending', 'declined', 'blocked'], default: 'active', index: true },
+    direction: { type: String, enum: ['outgoing', 'incoming', 'reciprocal'], default: 'reciprocal' },
+    invitedByClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', default: null },
+    invitationFirstName: { type: String, default: '' },
+    invitationLastName: { type: String, default: '' },
+    permissions: {
+      canBook: { type: Boolean, default: true },
+      canViewUpcoming: { type: Boolean, default: true },
+      canCancel: { type: Boolean, default: false },
+      canEditProfile: { type: Boolean, default: false },
+    },
     addedAt: { type: Date, default: Date.now },
+    respondedAt: { type: Date, default: null },
+    reportedAt: { type: Date, default: null },
+    unblockedAt: { type: Date, default: null },
+    unblockedByAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    unblockReason: { type: String, default: '', trim: true },
+    invitationTokenHash: { type: String, default: '' },
+    invitationExpiresAt: { type: Date, default: null },
+    invitationSentAt: { type: Date, default: null },
   }],
   managedByClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', default: null, index: true },
 
@@ -129,5 +161,10 @@ requiresNamePinUpgrade: { type: Boolean, default: true },
 nameVerifiedAt: { type: Date }
 
 });
+
+clientSchema.index(
+  { phone: 1 },
+  { unique: true, partialFilterExpression: { phone: { $type: 'string' } } }
+);
 
 module.exports = mongoose.models.Client || mongoose.model('Client', clientSchema);

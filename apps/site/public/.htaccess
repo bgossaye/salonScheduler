@@ -4,5 +4,21 @@ RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 RewriteRule . /index.html [L]
+
 AddType application/json .json
 AddType application/javascript .js
+
+<IfModule mod_headers.c>
+  # CRA content-hashed assets are safe to cache for one year.
+  <FilesMatch "\.(js|css|png|jpg|jpeg|gif|svg|webp|woff|woff2)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+
+  # These filenames do NOT change on deploy. Keep this rule last so it wins
+  # over the generic .js rule above for sw.js and env.js.
+  <FilesMatch "^(index\.html|sw\.js|manifest\.json|env\.js)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+</IfModule>

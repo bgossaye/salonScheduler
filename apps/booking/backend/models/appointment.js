@@ -59,6 +59,9 @@ const appointmentSchema = new mongoose.Schema({
   bookingFlags: [{ type: String }],
   clientDefaultStylistAtBooking: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
   bookedByAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+  // Client account that actually submitted an online booking. This can differ
+  // from clientId for family bookings and is used for family edit authority.
+  bookedByClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', default: null, index: true },
   bookedByWorkerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
   bookedByRole: { type: String, default: '' },
   bookedByName: { type: String, default: '' },

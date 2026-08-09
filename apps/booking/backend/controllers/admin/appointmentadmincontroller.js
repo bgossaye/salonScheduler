@@ -480,6 +480,39 @@ exports.getAppointmentsForClient = async (req, res) => {
   }
 };
 
+
+// GET /api/admin/appointments/:id
+// Used by the compact "Active appointment" strip so staff can jump directly
+// into the existing edit modal without creating a second edit workflow.
+exports.getAppointmentById = async (req, res) => {
+  try {
+    const appointment = await Appointment.findById(req.params.id)
+      .populate('clientId')
+      .populate('serviceId')
+      .populate('workerId')
+      .populate('addOns');
+
+    if (!appointment || appointment.archived === true) {
+      return res.status(404).json({ error: 'Appointment not found.' });
+    }
+
+    if (!can(req, 'appointmentsViewAll')) {
+      if (!can(req, 'appointmentsViewOwn')) {
+        return res.status(403).json({ error: 'Forbidden', permission: 'appointmentsViewAll' });
+      }
+      const mine = tokenWorkerId(req);
+      if (!mine || String(appointment.workerId?._id || appointment.workerId || '') !== mine) {
+        return res.status(403).json({ error: 'Workers can only view their own appointments.' });
+      }
+    }
+
+    return res.json(appointment);
+  } catch (err) {
+    console.error('❌ getAppointmentById failed:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
 exports.getAppointments = async (req, res) => {
   try {
     const { date, status, client, workerId } = req.query;

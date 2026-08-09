@@ -148,7 +148,7 @@ export default function ClientDashboard({ client }) {
 
   useEffect(() => {
     if (!effectiveClient?._id || !effectiveClient?.phone) return;
-    API.get(`/clients/${effectiveClient._id}/family/overview`, { params: { phone: effectiveClient.phone } })
+    API.get(`/clients/${effectiveClient._id}/family/overview`)
       .then(({ data }) => setFamilySummary(data?.summary || null))
       .catch(() => setFamilySummary(null));
   }, [effectiveClient?._id, effectiveClient?.phone]);
@@ -265,6 +265,7 @@ export default function ClientDashboard({ client }) {
             onClick={() => {
               sessionStorage.clear();
               localStorage.removeItem('client');
+              localStorage.removeItem('clientToken');
               window.location.href = '/booking';
             }}
             className="mt-1 text-sm text-blue-600 underline hover:text-blue-800"

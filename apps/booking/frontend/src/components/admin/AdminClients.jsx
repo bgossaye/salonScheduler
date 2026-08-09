@@ -1,13 +1,12 @@
 // AdminClients.jsx (with checkbox, bulk delete, and export CSV)
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import API from '../../api';
 import { toast } from 'react-toastify';
 import { Link } from 'react-router-dom';
 import Papa from 'papaparse';
-import { useRef } from 'react';
 import AppointmentFormModal from './AppointmentFormModal';
-import { coercePhone10, isTenDigit, prettyPhone, toDigits } from '../../utils/phone';
+import { coercePhone10, isTenDigit } from '../../utils/phone';
 
 const api = (API && typeof API.get === 'function')
   ? API
@@ -27,11 +26,7 @@ export default function AdminClients() {
   const [newClient, setNewClient] = useState({ firstName: '', lastName: '', phone: '', email: '' });
   const [selectedIds, setSelectedIds] = useState([]);
 
-  useEffect(() => {
-    fetchClients();
-  }, [search]);
-
-const fetchClients = async () => {
+  const fetchClients = useCallback(async () => {
     try {
       const { data } = await api.get('/admin/clients', { params: { search } });
       setClients(Array.isArray(data) ? data : []);
@@ -40,7 +35,11 @@ const fetchClients = async () => {
       setClients([]);
       toast.error(err?.response?.data?.error || 'Failed to load clients');
     }
-  };
+  }, [search]);
+
+  useEffect(() => {
+    fetchClients();
+  }, [fetchClients]);
 
 const handleImportCSV = async (e) => {
     const file = e.target.files[0];
@@ -150,7 +149,7 @@ const handleImportCSV = async (e) => {
   };
 
   const handleAddClient = async () => {
-    const { firstName, lastName, phone, email } = newClient;
+    const { firstName, lastName, phone } = newClient;
     if (!firstName || !lastName || !phone) {
       toast.warning("First name, last name, and phone are required.");
       return;
@@ -169,7 +168,7 @@ const handleImportCSV = async (e) => {
       if (newClient.email?.trim()) {
         payload.email = newClient.email.trim();
       }
-      const res = await api.post('/admin/clients', payload);
+      await api.post('/admin/clients', payload);
 
       toast.success("Client added!");
       setNewClient(payload);
@@ -199,17 +198,6 @@ const handleImportCSV = async (e) => {
       setSelectedIds(clients.map(c => c._id));
     }
   };
-
-const handleSaveAppointment = async (form) => {
-  try {
-    await api.post('/admin/appointments', form);
-    toast.success('Appointment scheduled!');
-    setApptModalOpen(false);
-    setSelectedClient(null);
-  } catch (err) {
-    toast.error('Failed to schedule appointment');
-  }
-};
 
   const handleExportCSV = () => {
     const headers = ['First Name', 'Last Name', 'Phone', 'Email'];

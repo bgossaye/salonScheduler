@@ -7,6 +7,55 @@ import { normalizePhone10, coercePhone10, isTenDigit } from '../utils/phone';
 
 const SUPPORT_PHONE = '5854146041';
 
+const AWAKE_KEY = 'serverAwake';
+const AWAKE_TS_KEY = 'serverAwakeTs';
+const AWAKE_TTL_MS = 14 * 60 * 1000;
+
+const isAwakeFresh = () => {
+  try {
+    const flag = sessionStorage.getItem(AWAKE_KEY) === '1';
+    const ts = Number(sessionStorage.getItem(AWAKE_TS_KEY) || 0);
+    return flag && (Date.now() - ts) < AWAKE_TTL_MS;
+  } catch {
+    return false;
+  }
+};
+
+const markAwake = (ok) => {
+  try {
+    if (ok) {
+      sessionStorage.setItem(AWAKE_KEY, '1');
+      sessionStorage.setItem(AWAKE_TS_KEY, String(Date.now()));
+    } else {
+      sessionStorage.removeItem(AWAKE_KEY);
+      sessionStorage.removeItem(AWAKE_TS_KEY);
+    }
+  } catch {/* ignore */}
+};
+
+const wakeRender = async ({ tag = 'client-welcome' } = {}) => {
+  const ts = Date.now();
+  const tryOnce = async (label) => {
+    const r = await API.get('/healthz', { params: { ts, t: label } });
+    return r?.status === 200;
+  };
+  try {
+    const ok = await tryOnce(tag);
+    markAwake(ok);
+    return ok;
+  } catch {
+    await new Promise((r) => setTimeout(r, 300));
+    try {
+      const ok2 = await tryOnce(`${tag}:retry`);
+      markAwake(ok2);
+      return ok2;
+    } catch {
+      markAwake(false);
+      return false;
+    }
+  }
+};
+
 export default function ClientWelcome({ client, onClientLoaded }) {
   const [phone, setPhone] = useState('');
   const [exists, setExists] = useState(false);
@@ -34,88 +83,7 @@ export default function ClientWelcome({ client, onClientLoaded }) {
 
   const isValidPin = (v) => /^\d{4}$/.test(v);
 
-  const formatNoticeDate = (value) => {
-    if (!value) return '';
-    const date = new Date(`${value}T12:00:00`);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  const formatNoticeRange = (notice) => {
-    if (!notice?.startDate) return '';
-    const start = formatNoticeDate(notice.startDate);
-    const end = formatNoticeDate(notice.endDate);
-    return !end || notice.startDate === notice.endDate ? start : `${start} – ${end}`;
-  };
-
-  const noticeStatusText = (notice, future = false) => {
-    const storeText = notice.storeClosed
-      ? (future ? 'Store will be closed' : 'Store is closed')
-      : (future ? 'Store will be open' : 'Store is open');
-    const onlineText = notice.onlineBookingOff
-      ? (future ? 'online booking will be unavailable' : 'online booking is unavailable')
-      : (future ? 'online booking will remain available' : 'online booking is available');
-    return `${storeText}; ${onlineText}.`;
-  };
-
-  const noticeActionText = (notice, future = false) => {
-    if (!notice.onlineBookingOff && notice.storeClosed) {
-      return future ? 'You may continue to book another date.' : 'You may continue to book another date.';
-    }
-    if (notice.onlineBookingOff) return 'Please call the salon.';
-    return '';
-  };
-
   const supportPhoneDisplay = `(${SUPPORT_PHONE.slice(0, 3)}) ${SUPPORT_PHONE.slice(3, 6)}-${SUPPORT_PHONE.slice(6)}`;
-
-  const AWAKE_KEY = 'serverAwake';
-  const AWAKE_TS_KEY = 'serverAwakeTs';
-  const AWAKE_TTL_MS = 14 * 60 * 1000;
-
-  const isAwakeFresh = () => {
-    try {
-      const flag = sessionStorage.getItem(AWAKE_KEY) === '1';
-      const ts = Number(sessionStorage.getItem(AWAKE_TS_KEY) || 0);
-      return flag && (Date.now() - ts) < AWAKE_TTL_MS;
-    } catch {
-      return false;
-    }
-  };
-
-  const markAwake = (ok) => {
-    try {
-      if (ok) {
-        sessionStorage.setItem(AWAKE_KEY, '1');
-        sessionStorage.setItem(AWAKE_TS_KEY, String(Date.now()));
-      } else {
-        sessionStorage.removeItem(AWAKE_KEY);
-        sessionStorage.removeItem(AWAKE_TS_KEY);
-      }
-    } catch {/* ignore */}
-  };
-
-  const wakeRender = async ({ tag = 'client-welcome' } = {}) => {
-    const ts = Date.now();
-    const tryOnce = async (label) => {
-      const r = await API.get('/healthz', { params: { ts, t: label } });
-      return r?.status === 200;
-    };
-    try {
-      const ok = await tryOnce(tag);
-      markAwake(ok);
-      return ok;
-    } catch {
-      await new Promise((r) => setTimeout(r, 300));
-      try {
-        const ok2 = await tryOnce(`${tag}:retry`);
-        markAwake(ok2);
-        return ok2;
-      } catch {
-        markAwake(false);
-        return false;
-      }
-    }
-  };
 
   const getClientByPhone = async (p) => {
     const { data } = await API.get('/clients', { params: { phone: p } });
@@ -284,16 +252,22 @@ export default function ClientWelcome({ client, onClientLoaded }) {
       }
 
       const { data } = await API.post('/clients/login', { phone, pin });
+      const clientToken = data?.clientToken || '';
+      const clientData = { ...(data || {}) };
+      delete clientData.clientToken;
+      if (clientToken) localStorage.setItem('clientToken', clientToken);
       if (data?.mustChangePin) {
+        localStorage.setItem('client', JSON.stringify(clientData));
+        onClientLoaded?.(clientData);
         openUpgradeFlow();
         setIsLoading(false);
         return;
       }
 
-      localStorage.setItem('client', JSON.stringify(data));
+      localStorage.setItem('client', JSON.stringify(clientData));
       localStorage.setItem('lastPhone', phone);
-      onClientLoaded?.(data);
-      await proceed(data);
+      onClientLoaded?.(clientData);
+      await proceed(clientData);
     } catch (err) {
       const status = err?.response?.status;
       const payload = err?.response?.data || {};
@@ -329,25 +303,22 @@ export default function ClientWelcome({ client, onClientLoaded }) {
         <img src={logo} alt="Rakie Salon Logo" className="w-24 h-24 mb-4" />
       </a>
 
-      {bookingStatus.currentNotices.find((notice) => notice.onlineBookingOff) && (() => {
-        const notice = bookingStatus.currentNotices.find((item) => item.onlineBookingOff);
-        return (
-          <div
-            className="mb-3 w-full max-w-md rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-950 shadow-sm"
-            role="alert"
-          >
-            <div className="flex items-start gap-2">
-              <span className="leading-5" aria-hidden="true">⚠️</span>
-              <p className="min-w-0 leading-5">
-                <strong>Online booking is temporarily unavailable.</strong>{' '}
-                <a href={`tel:${SUPPORT_PHONE}`} className="font-semibold underline">
-                  Call {supportPhoneDisplay}
-                </a>
-              </p>
-            </div>
+      {bookingStatus.currentNotices.some((notice) => notice.onlineBookingOff) && (
+        <div
+          className="mb-3 w-full max-w-md rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-950 shadow-sm"
+          role="alert"
+        >
+          <div className="flex items-start gap-2">
+            <span className="leading-5" aria-hidden="true">⚠️</span>
+            <p className="min-w-0 leading-5">
+              <strong>Online booking is temporarily unavailable.</strong>{' '}
+              <a href={`tel:${SUPPORT_PHONE}`} className="font-semibold underline">
+                Call {supportPhoneDisplay}
+              </a>
+            </p>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       <div className="bg-white shadow-md rounded p-6 w-full max-w-md">
         <h1 className="text-xl font-semibold mb-4 text-center">Welcome to Rakie Salon</h1>
@@ -452,19 +423,23 @@ export default function ClientWelcome({ client, onClientLoaded }) {
                 otpMode={intakeConfig.otpMode}
                 setPin={intakeConfig.setPin}
                 onComplete={async (clientData) => {
+                  const tokenFromFlow = clientData?.clientToken || '';
+                  const safeClientData = { ...(clientData || {}) };
+                  delete safeClientData.clientToken;
                   try {
-                    localStorage.setItem('client', JSON.stringify(clientData));
-                    localStorage.setItem('lastPhone', clientData.phone || phone || '');
+                    if (tokenFromFlow) localStorage.setItem('clientToken', tokenFromFlow);
+                    localStorage.setItem('client', JSON.stringify(safeClientData));
+                    localStorage.setItem('lastPhone', safeClientData.phone || phone || '');
                   } catch {/* ignore */}
 
-                  if (intakeConfig.otpMode === 'reset' && clientData?.requiresNamePinUpgrade) {
+                  if (intakeConfig.otpMode === 'reset' && safeClientData?.requiresNamePinUpgrade) {
                     setIntakeConfig({ verify: false, otpPurpose: 'reset', otpMode: 'profile', setPin: false });
                     return;
                   }
 
-                  onClientLoaded?.(clientData);
+                  onClientLoaded?.(safeClientData);
                   setShowIntake(false);
-                  await proceed(clientData);
+                  await proceed(safeClientData);
                 }}
                 onCancel={handleCancelFromIntake}
               />

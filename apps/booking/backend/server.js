@@ -33,6 +33,31 @@ cron.schedule(RETENTION_CRON, async () => {
   }
 }, { timezone: REMINDER_TIMEZONE });
 console.log(`[appointment-retention] Daily cleanup scheduled: ${RETENTION_CRON} (${REMINDER_TIMEZONE})`);
+async function cleanupExpiredFamilyInvitationTokens() {
+  const now = new Date();
+  try {
+    const result = await Client.updateMany(
+      { familyLinks: { $elemMatch: { status: 'pending', invitationExpiresAt: { $lte: now }, invitationTokenHash: { $ne: '' } } } },
+      {
+        $set: {
+          'familyLinks.$[expired].invitationTokenHash': '',
+          'familyLinks.$[expired].invitationExpiresAt': null,
+        },
+      },
+      {
+        arrayFilters: [{ 'expired.status': 'pending', 'expired.invitationExpiresAt': { $lte: now }, 'expired.invitationTokenHash': { $ne: '' } }],
+      }
+    );
+    if (result.modifiedCount) console.log(`[family-invitation] cleared expired bearer tokens from ${result.modifiedCount} client record(s)`);
+  } catch (err) {
+    console.error('[family-invitation] expired-token cleanup failed:', err?.message || err);
+  }
+}
+
+const FAMILY_INVITATION_CLEANUP_CRON = '17 */6 * * *';
+cron.schedule(FAMILY_INVITATION_CLEANUP_CRON, cleanupExpiredFamilyInvitationTokens, { timezone: REMINDER_TIMEZONE });
+console.log(`[family-invitation] Expired token cleanup scheduled: ${FAMILY_INVITATION_CLEANUP_CRON} (${REMINDER_TIMEZONE})`);
+
 const inbound = require('./routes/twilioInbound');
 
 async function sendDailyReminders() {
@@ -74,6 +99,20 @@ async function sendDailyReminders() {
 mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
     console.log('✅ MongoDB connected');
+    try {
+      const indexes = await Client.collection.indexes();
+      const legacyPhoneIndex = indexes.find((index) => index.name === 'phone_1' && !index.partialFilterExpression);
+      if (legacyPhoneIndex) {
+        await Client.collection.dropIndex('phone_1');
+        console.log('✅ Replaced legacy phone index to support no-phone dependents');
+      }
+      await Client.collection.createIndex(
+        { phone: 1 },
+        { unique: true, name: 'phone_1', partialFilterExpression: { phone: { $type: 'string' } } }
+      );
+    } catch (indexError) {
+      console.error('❌ Client phone index migration failed:', indexError?.message || indexError);
+    }
     ensureRakebWorkerAndMigrate({ verbose: true }).catch(err => {
       console.error('❌ Staff/worker migration failed:', err);
     });

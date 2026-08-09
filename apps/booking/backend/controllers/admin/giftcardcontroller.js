@@ -3,12 +3,11 @@ const QRCode = require('qrcode');
 const nodemailer = require('nodemailer');
 const path = require('path');
 const fs = require('fs');
-const ADMIN_PASSWORD = process.env.ADMIN_GIFT_CARD_PASSWORD || 'changeme';
 
 // ✅ Create Gift Card (Digital or Physical)
 exports.createGiftCard = async (req, res) => {
   try {
-    const { code, type, amount, pin, email, adminPassword } = req.body;
+    const { code, type, amount, pin, email } = req.body;
 
     if (!['digital', 'physical'].includes(type)) {
       return res

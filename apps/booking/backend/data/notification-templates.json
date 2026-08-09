@@ -74,6 +74,12 @@
       "enabled": true,
       "smsTemplate": "Your Rakie Salon PIN was updated.",
       "emailTemplate": "Your Rakie Salon PIN was updated."
+    },
+    {
+      "templateType": "family_invite",
+      "enabled": true,
+      "smsTemplate": "{{message}}",
+      "emailTemplate": "{{message}}"
     }
   ]
 }

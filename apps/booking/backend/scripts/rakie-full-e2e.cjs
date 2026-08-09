@@ -147,6 +147,14 @@ function phoneFromOffset(offset = 0) {
   return `585${String(last7).padStart(7, '0')}`;
 }
 
+function clientSessionToken(client) {
+  return jwt.sign(
+    { id: String(client._id), phone: String(client.phone || ''), tokenType: 'client' },
+    process.env.JWT_SECRET,
+    { expiresIn: '30m' }
+  );
+}
+
 function compact(value, max = 700) {
   const s = typeof value === 'string' ? value : JSON.stringify(value);
   return s.length > max ? `${s.slice(0, max)}…` : s;
@@ -633,7 +641,8 @@ async function main() {
     assert(update.data.nickname === `${TAG} Red BMW`, 'client nickname did not update', update.data);
 
     const byPhone = await request('GET', `/api/clients?phone=${phone}`, { token: false, expected: [200] });
-    assert(byPhone.data && String(byPhone.data._id) === String(client._id), 'client phone lookup failed', byPhone.data);
+    assert(byPhone.data?.exists === true, 'public client existence lookup failed', byPhone.data);
+    assert(!byPhone.data?.firstName && !byPhone.data?.phone, 'public phone lookup must not expose profile details', byPhone.data);
 
     const details = await request('GET', `/api/admin/clients/${client._id}/details`, { expected: [200] });
     assert(details.data.nickname === `${TAG} Red BMW`, 'client details missing nickname', details.data);
@@ -816,14 +825,18 @@ async function main() {
     });
     assert(updated.data.status === 'completed', 'appointment status did not update', updated.data);
 
-    const clientAppts = await request('GET', `/api/appointments/client/${client._id}`, { token: false, expected: [200] });
+    await request('GET', `/api/appointments/client/${client._id}`, { token: false, expected: [401] });
+    const clientAuth = clientSessionToken(client);
+    const clientAppts = await request('GET', `/api/appointments/client/${client._id}`, { token: false, headers: { Authorization: `Bearer ${clientAuth}` }, expected: [200] });
     assert(clientAppts.data.some((x) => String(x._id) === String(appointment._id)), 'client appointment list missing appointment', clientAppts.data);
   });
 
   await test('online booking disabled fallback and re-enabled happy path', async () => {
     await setRuntime('booking.online.enabled', false);
+    const onlineClientAuth = clientSessionToken(client);
     const disabled = await request('POST', '/api/appointments', {
       token: false,
+      headers: { Authorization: `Bearer ${onlineClientAuth}` },
       expected: [403],
       body: {
         clientId: client._id,
@@ -840,6 +853,7 @@ async function main() {
     await setRuntime('booking.online.enabled', true);
     const online = await request('POST', '/api/appointments', {
       token: false,
+      headers: { Authorization: `Bearer ${onlineClientAuth}` },
       expected: [201],
       body: {
         clientId: client._id,

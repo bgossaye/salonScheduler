@@ -11,7 +11,6 @@ const AdminGiftCards = () => {
     const [type, setType] = useState('physical');
     const [form, setForm] = useState({ amount: '', pin: '', email: '', code: '' });
     const [adminModal, setAdminModal] = useState(false);
-    const [adminPassword, setAdminPassword] = useState('');
     const [previewCode, setPreviewCode] = useState(null);
     const [redeem, setRedeem] = useState({ code: '', pin: '', redeemAmount: '' });
     const emailRef = useRef(null);
@@ -80,16 +79,10 @@ const closePopup = () =>
             return;
         }
         setForm(prev => ({ ...prev, email: filledEmail }));
-        setAdminPassword(''); // Ensure password field is cleared
         setAdminModal(true);
     };
 
     const handleAdminAuth = () => {
-        if (adminPassword !== '7125') {
-            alert('Invalid admin password.');
-            return;
-        }
-
         if (adminModal === 'viewAll') {
             setViewMode('viewAll');
             fetchAllGiftCards();
@@ -108,7 +101,6 @@ const closePopup = () =>
         }
 
         setAdminModal(false);
-        setAdminPassword('');
     };
 
 
@@ -130,11 +122,11 @@ const closePopup = () =>
             return;
         }
 
-        const payload = { ...form, type, adminPassword: '7125' };
+        const payload = { ...form, type };
 
         try {
             // Step 1: Create gift card in DB
-            const response = await API.post('/giftcards/create', payload);
+            await API.post('/giftcards/create', payload);
 
             setTimeout(async () => {
                 if (type === 'digital') {
@@ -241,13 +233,6 @@ const closePopup = () =>
 
 
 
-    const handleRedeem = () => {
-        const payload = { ...redeem };
-        API.post('/giftcards/redeem', payload)
-            .then(res => alert(`Remaining balance: $${res.data.remaining}`))
-            .catch(err => alert(err.response?.data?.message || 'Redemption error'));
-    };
-
     const handleExit = () => {
         // Clear fields
         setForm({ amount: '', pin: '', email: '', code: '' });
@@ -274,7 +259,7 @@ const closePopup = () =>
                         <Button className="w-full sm:w-auto" onClick={() => setViewMode('redeem')}>
                             Redeem
                         </Button>
-                        <Button className="w-full sm:w-auto" onClick={() => { setAdminModal('viewAll'); setAdminPassword(''); }}>
+                        <Button className="w-full sm:w-auto" onClick={() => setAdminModal('viewAll')}>
                             Show All
                         </Button>
                     </div>
@@ -421,23 +406,10 @@ const closePopup = () =>
             {adminModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div className="bg-white p-6 rounded shadow max-w-sm w-full">
-                        <h3 className="text-lg font-semibold mb-4">Admin Authorization</h3>
-                        <Input
-                            type="text"
-                            value="admin"
-                            readOnly
-                            className="mb-2 bg-gray-100 text-gray-500"
-                        />
-                        <Input
-                            type="password"
-                            placeholder="Enter admin password"
-                            value={adminPassword}
-                            autoComplete="new-password"
-                            onChange={e => setAdminPassword(e.target.value)}
-                            className="mb-4"
-                        />
+                        <h3 className="text-lg font-semibold mb-2">Confirm gift card action</h3>
+                        <p className="mb-4 text-sm text-gray-600">Your signed-in staff account and Gift Card permission authorize this action.</p>
                         <div className="flex justify-end gap-2">
-                            <Button onClick={handleAdminAuth}>Submit</Button>
+                            <Button onClick={handleAdminAuth}>Continue</Button>
                             <button onClick={() => setAdminModal(false)} > Cancel  </button>
                         </div>
                     </div>

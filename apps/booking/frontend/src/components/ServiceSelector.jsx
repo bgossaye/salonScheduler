@@ -1,5 +1,6 @@
 // Finalized ServiceSelector.jsx with frozen top banner and preserved layout
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
@@ -7,6 +8,7 @@ import API from '../api';
 import { toast } from 'react-toastify';
 import logo from '../assets/TheRSlogo.png';
 import familyHubIcon from '../assets/family-hub.png';
+import FamilyHub from './FamilyHub';
 import {
   doesDateQualifyForDeal,
   getDealAppliesOnlyText,
@@ -19,28 +21,6 @@ import {
 const RAKIE_PHONE = '5854146041';
 const ONLINE_BOOKING_COUNT_KEY = 'rakieOnlineBookingServiceCount';
 const ONLINE_BOOKING_COUNT_TS_KEY = 'rakieOnlineBookingServiceCountAt';
-const ONLINE_BOOKING_COUNT_TTL_MS = 2 * 60 * 60 * 1000;
-
-function readOnlineBookingCount() {
-  try {
-    const ts = Number(sessionStorage.getItem(ONLINE_BOOKING_COUNT_TS_KEY) || 0);
-    if (!ts || Date.now() - ts > ONLINE_BOOKING_COUNT_TTL_MS) {
-      sessionStorage.removeItem(ONLINE_BOOKING_COUNT_KEY);
-      sessionStorage.removeItem(ONLINE_BOOKING_COUNT_TS_KEY);
-      return 0;
-    }
-    const count = Number(sessionStorage.getItem(ONLINE_BOOKING_COUNT_KEY) || 0);
-    return Number.isFinite(count) && count > 0 ? count : 0;
-  } catch { return 0; }
-}
-
-function writeOnlineBookingCount(count) {
-  try {
-    sessionStorage.setItem(ONLINE_BOOKING_COUNT_KEY, String(Math.max(0, Number(count) || 0)));
-    sessionStorage.setItem(ONLINE_BOOKING_COUNT_TS_KEY, String(Date.now()));
-  } catch { console.log('booking count save failed'); }
-}
-
 function clearOnlineBookingCount() {
   try {
     sessionStorage.removeItem(ONLINE_BOOKING_COUNT_KEY);
@@ -132,7 +112,6 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [couponResult, setCouponResult] = useState(null);
   const [couponChecking, setCouponChecking] = useState(false);
   const [bookingSettings, setBookingSettings] = useState({ maxOnlineServicesPerVisit: 2, limitMessage: 'For more than 2 services, please call Rakie Salon so we can allocate enough time for your visit.' });
-  const [separateServiceCount, setSeparateServiceCount] = useState(() => readOnlineBookingCount());
   const [bookingCompleteNotice, setBookingCompleteNotice] = useState(null);
   const [familyMembers, setFamilyMembers] = useState([]);
   const [selectedBookingClientIds, setSelectedBookingClientIds] = useState([]);
@@ -141,9 +120,17 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [familyStepSelections, setFamilyStepSelections] = useState({});
   const [familyScheduleMode, setFamilyScheduleMode] = useState('individual'); // individual | together-auto | together-same | together-back-to-back
   const [showAddFamilyMember, setShowAddFamilyMember] = useState(false);
-  const [familyMemberForm, setFamilyMemberForm] = useState({ firstName: '', lastName: '', phone: '', relationship: 'family' });
+  const [familyMemberForm, setFamilyMemberForm] = useState({ firstName: '', lastName: '', phone: '', relationship: 'family', dob: '', guardianAttestation: false });
   const [familySaving, setFamilySaving] = useState(false);
+  const [familyPhonePromptOpen, setFamilyPhonePromptOpen] = useState(false);
+  const [familyPhonePromptMessage, setFamilyPhonePromptMessage] = useState('A phone number for this family member is required.');
+  const [familyPhoneFieldError, setFamilyPhoneFieldError] = useState('');
+  const [familyNoPhoneMode, setFamilyNoPhoneMode] = useState(false);
+  const familyPhoneInputRef = useRef(null);
   const [showFamilyBookingPanel, setShowFamilyBookingPanel] = useState(false);
+  const [familyScheduleSummary, setFamilyScheduleSummary] = useState(null);
+  const [familyOverviewMembers, setFamilyOverviewMembers] = useState([]);
+  const [showFamilyScheduleHub, setShowFamilyScheduleHub] = useState(false);
   const [openPriceServiceId, setOpenPriceServiceId] = useState(null);
   const [bookingStatus, setBookingStatus] = useState({ currentNotices: [], futureNotices: [], promotions: [], storeStatus: null, shopMode: null });
   const getEditingId = (apt) => apt?._id || apt?.id || apt?.appointmentId || null;
@@ -196,6 +183,7 @@ export default function ServiceSelector({ client, onSignOut }) {
        'clientPhone',
        'clientId',
        'lastPhone',
+       'clientToken',
      ].forEach((key) => localStorage.removeItem(key));
    } catch (error) {
      console.error('Unable to clear client session:', error);
@@ -226,12 +214,41 @@ useEffect(() => {
 
 useEffect(() => {
   const ownerId = effectiveClient?._id;
-  const ownerPhone = effectiveClient?.phone;
-  if (!ownerId || !ownerPhone || mode !== 'create') return;
+  if (!ownerId || mode !== 'create') return;
+
+  let cancelled = false;
+  API.get(`/clients/${ownerId}/family/overview`)
+    .then(({ data }) => {
+      if (!cancelled) {
+        setFamilyScheduleSummary(data?.summary || null);
+        setFamilyOverviewMembers(Array.isArray(data?.members) ? data.members : []);
+      }
+    })
+    .catch((error) => {
+      if (!cancelled) {
+        console.error('Unable to load family schedule summary:', error?.response?.data || error.message);
+        setFamilyScheduleSummary(null);
+        setFamilyOverviewMembers([]);
+      }
+    });
+  return () => { cancelled = true; };
+}, [effectiveClient?._id, mode]);
+
+useEffect(() => {
+  const ownerId = effectiveClient?._id;
+  if (!ownerId || mode !== 'create') return;
 
   setSelectedBookingClientIds((currentIds) => currentIds.length ? currentIds : [String(ownerId)]);
-  API.get(`/clients/${ownerId}/family`, { params: { phone: ownerPhone } })
-    .then(({ data }) => setFamilyMembers(Array.isArray(data?.members) ? data.members : []))
+  API.get(`/clients/${ownerId}/family`)
+    .then(({ data }) =>
+      setFamilyMembers(
+        (Array.isArray(data?.members) ? data.members : []).filter(
+          (member) =>
+            String(member?.linkStatus || 'active') === 'active' &&
+            member?.permissions?.canBook !== false
+        )
+      )
+    )
     .catch((error) => {
       console.error('Unable to load family members:', error?.response?.data || error.message);
       setFamilyMembers([]);
@@ -281,11 +298,43 @@ const firstFamilyBookingBlock = useMemo(() => {
   return { date, startTime: toTime(startMinutes), endTime: toTime(endMinutes), workerIds };
 }, [familyBookingDrafts, selectedBookingClientIds]);
 
+const selectedFamilyAppointmentRows = useMemo(() => {
+  const byId = new Map((familyOverviewMembers || []).map((member) => [String(member?._id || ''), member]));
+  return selectedBookingClientIds.flatMap((clientId) => {
+    const member = byId.get(String(clientId));
+    if (!member) return [];
+    const appointments = Array.isArray(member.upcomingAppointments) && member.upcomingAppointments.length
+      ? member.upcomingAppointments
+      : (member.nextAppointment ? [member.nextAppointment] : []);
+    return appointments.map((appointment) => ({
+      member,
+      appointment,
+      canEdit: appointment?.canEditAppointment === true,
+    }));
+  });
+}, [familyOverviewMembers, selectedBookingClientIds]);
+
+const editFamilyAppointment = (appointment) => {
+  if (!appointment) return;
+  try {
+    sessionStorage.setItem('editingAppointment', JSON.stringify(appointment));
+  } catch (error) {
+    console.error('Unable to prepare family appointment edit:', error);
+  }
+  window.location.assign('/booking/schedule');
+};
+
 const familyTogetherMode = selectedBookingClientIds.length > 1 && familyScheduleMode !== 'individual';
 
 const toggleBookingPerson = (clientId) => {
   const id = String(clientId || '');
   if (!id) return;
+  const targetPerson = familyBookingPeople.find((person) => String(person?._id || '') === id);
+  const targetActiveCount = Number(targetPerson?.activeAppointmentCount ?? targetPerson?.upcomingAppointments?.length ?? 0);
+  if (!selectedBookingClientIds.includes(id) && targetActiveCount >= 2) {
+    toast.info(`${targetPerson?.firstName || 'This client'} already has two active appointments. Please contact the salon if another appointment is needed.`);
+    return;
+  }
   setSelectedBookingClientIds((currentIds) => {
     let nextIds = currentIds;
     if (currentIds.includes(id)) {
@@ -314,30 +363,57 @@ const addFamilyMember = async () => {
   const firstName = String(familyMemberForm.firstName || '').trim();
   const lastName = String(familyMemberForm.lastName || '').trim();
   const phone = String(familyMemberForm.phone || '').replace(/\D/g, '').slice(-10);
-  if (!firstName || !lastName || phone.length !== 10) {
-    toast.error('Enter the family member’s name and a valid 10-digit phone number.');
+
+  if (!firstName || !lastName) {
+    toast.error('Enter the family member’s first and last name.');
     return;
   }
+
+  if (!familyNoPhoneMode && !phone) {
+    setFamilyPhoneFieldError('Please enter the family member’s phone number.');
+    setFamilyPhonePromptMessage('A phone number for this family member is required.');
+    setFamilyPhonePromptOpen(true);
+    return;
+  }
+
+  if (!familyNoPhoneMode && phone.length !== 10) {
+    setFamilyPhoneFieldError('Please enter a valid 10-digit phone number.');
+    setFamilyPhonePromptMessage('Please enter a valid 10-digit phone number for this family member.');
+    setFamilyPhonePromptOpen(true);
+    return;
+  }
+
+  if (familyNoPhoneMode && (!familyMemberForm.dob || !familyMemberForm.guardianAttestation)) {
+    toast.error('Date of birth and guardian confirmation are required.');
+    return;
+  }
+
   setFamilySaving(true);
   try {
     const { data } = await API.post(`/clients/${effectiveClient._id}/family`, {
-      ownerPhone: effectiveClient.phone,
       firstName,
       lastName,
-      memberPhone: phone,
-      relationship: familyMemberForm.relationship || 'family',
+      memberPhone: familyNoPhoneMode ? '' : phone,
+      relationship: familyMemberForm.relationship || (familyNoPhoneMode ? 'child' : 'family'),
+      noPhone: familyNoPhoneMode,
+      dob: familyNoPhoneMode ? familyMemberForm.dob : null,
+      guardianAttestation: familyNoPhoneMode ? Boolean(familyMemberForm.guardianAttestation) : false,
     });
     const member = data?.member;
-    if (member?._id) {
+    if (data?.pendingInvitation) {
+      toast.info('Invitation sent. This existing client must accept before you can book for them.');
+    } else if (member?._id) {
       setFamilyMembers((members) => {
         const withoutDuplicate = members.filter((item) => String(item._id) !== String(member._id));
         return [...withoutDuplicate, member];
       });
       setSelectedBookingClientIds((ids) => Array.from(new Set([...ids, String(member._id)])).slice(0, 2));
     }
-    setFamilyMemberForm({ firstName: '', lastName: '', phone: '', relationship: 'family' });
+    setFamilyMemberForm({ firstName: '', lastName: '', phone: '', relationship: 'family', dob: '', guardianAttestation: false });
+    setFamilyNoPhoneMode(false);
+    setFamilyPhoneFieldError('');
     setShowAddFamilyMember(false);
-    toast.success(data?.created ? 'Family member added and selected.' : 'Existing client linked and selected.');
+    if (!data?.pendingInvitation) toast.success(familyNoPhoneMode ? 'Minor dependent added and selected.' : 'Family member added and selected.');
   } catch (error) {
     toast.error(error?.response?.data?.error || 'Could not add the family member.');
   } finally {
@@ -871,25 +947,6 @@ const applyCouponCode = async () => {
   }
 };
 
-const resetForAnotherSeparateService = () => {
-  setSelectedCategory(null);
-  setSelectedService(null);
-  setSelectedWorker(null);
-  setAvailableWorkers([]);
-  setShowStylistOptions(false);
-  setRelationshipStylistUnavailable(false);
-  setSelectedDate(null);
-  setSelectedTime(null);
-  setAvailableTimes([]);
-  setAddOns([]);
-  setSelectedAddOns([]);
-  setShowAddOnModal(false);
-  setCouponCode('');
-  setCouponResult(null);
-  setBookingCompleteNotice(null);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-};
-
 const captureFamilyStepSelection = () => ({
   selectedCategory,
   selectedService,
@@ -967,33 +1024,6 @@ const resetForNextFamilyMember = (preferredDate = null) => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
-const finishOrContinueAfterCreate = () => {
-  const max = Number(bookingSettings.maxOnlineServicesPerVisit || 2);
-  const safeMax = max === 1 ? 1 : 2;
-  const nextCount = separateServiceCount + 1;
-  const reachedLimit = nextCount >= safeMax;
-  const remaining = Math.max(0, safeMax - nextCount);
-
-  setSeparateServiceCount(nextCount);
-  writeOnlineBookingCount(nextCount);
-  setBookingCompleteNotice({
-    count: nextCount,
-    max: safeMax,
-    remaining,
-    reachedLimit,
-    limitMessage: bookingSettings.limitMessage || `For more than ${safeMax} service${safeMax === 1 ? '' : 's'}, please call Rakie Salon so we can allocate enough time for your visit.`,
-  });
-  setIsSubmitting(false);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-};
-
-const finishBookingAndGoToDashboard = () => {
-  clearOnlineBookingCount();
-  persistClientForDashboard();
-  sessionStorage.removeItem('rebookAppointment');
-  window.location.replace('/booking/dashboard');
-};
-
 const handleSubmit = async () => {
   if (isSubmitting) return;
 
@@ -1046,7 +1076,11 @@ const handleSubmit = async () => {
     const duration = baseDuration + extraDuration;
 
    const payload = {      
-      clientId: current.clientId,
+      // In create mode, always honor the currently selected family-booking target.
+      // This matters when My Family launches booking for exactly one other member:
+      // selectedBookingClientIds has one id, so the old multi-person-only override
+      // never ran and the appointment could be saved against the signed-in owner.
+      clientId: mode === 'create' ? (activeBookingClientId || current.clientId) : current.clientId,
       serviceId: current.serviceId,
       service: svcObj?.name || baseline?.serviceName || undefined,
       workerId: current.workerId || undefined,
@@ -1496,13 +1530,14 @@ return (
               <button
                 type="button"
                 onClick={() => setShowFamilyBookingPanel(true)}
-                className="relative flex h-11 w-11 items-center justify-center rounded-full border border-blue-200 bg-white shadow-sm transition hover:border-blue-400 hover:shadow"
-                aria-label="Book for or manage family members"
-                title="Book for family"
+                className="relative inline-flex h-11 w-auto items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-3 text-sm font-semibold text-blue-800 shadow-sm transition hover:border-blue-400 hover:bg-blue-50 hover:shadow"
+                aria-label="Family Booking"
+                title="Family Booking"
               >
                 <img src={familyHubIcon} alt="" className="h-8 w-8 object-contain" />
+                <span>Family Booking</span>
                 {selectedBookingClientIds.length > 1 && (
-                  <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-yellow-400 px-1 text-center text-[10px] font-bold leading-[18px] text-gray-900">
+                  <span className="absolute right-2 top-2 min-w-[18px] rounded-full bg-yellow-400 px-1 text-center text-[10px] font-bold leading-[18px] text-gray-900">
                     {selectedBookingClientIds.length}
                   </span>
                 )}
@@ -1510,7 +1545,21 @@ return (
             </div>
           ) : (
             <section className="rounded-lg border border-blue-200 bg-blue-50 p-3 shadow-sm">
-              <div className="mb-2 flex justify-end">
+              <div className="mb-2 flex items-center justify-end gap-2">
+                {Number(familyScheduleSummary?.upcomingCount || 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFamilyScheduleHub(true)}
+                    className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-200 bg-white px-2 text-xs font-semibold text-emerald-700"
+                    aria-label="Open family schedule"
+                    title="Family schedule"
+                  >
+                    <span>Family Schedule</span>
+                    <span className="min-w-[18px] rounded-full bg-emerald-600 px-1 text-center text-[10px] font-bold leading-[18px] text-white">
+                      {familyScheduleSummary.upcomingCount}
+                    </span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -1520,7 +1569,7 @@ return (
                     }
                     setShowFamilyBookingPanel(false);
                   }}
-                  className="rounded border border-blue-200 bg-white px-2 py-1 text-xs font-semibold text-blue-700"
+                  className="h-7 rounded border border-blue-200 bg-white px-2 text-xs font-semibold text-blue-700"
                 >
                   Hide family options
                 </button>
@@ -1539,12 +1588,26 @@ return (
             </button>
           </div>
 
-          {selectedBookingClientIds.length > 1 && (
-            <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">
-              Booking {Math.min(activeFamilyBookingIndex + 1, selectedBookingClientIds.length)} of {selectedBookingClientIds.length} for <strong>{familyBookingPeople.find((person) => String(person._id) === String(activeBookingClientId))?.firstName || 'family member'}</strong>.
-              {familyBookingDrafts.length > 0 && <span> The previous person’s choices are saved and will be submitted together at the end.</span>}
-            </div>
-          )}
+          {selectedBookingClientIds.length > 1 && (() => {
+            const selectedPeople = selectedBookingClientIds
+              .map((selectedId) => familyBookingPeople.find((person) => String(person._id) === String(selectedId)))
+              .filter(Boolean);
+            const selectedNames = selectedPeople.map((person) => person.firstName || 'Family member');
+            const activePerson = familyBookingPeople.find((person) => String(person._id) === String(activeBookingClientId));
+            const progressNumber = Math.min(activeFamilyBookingIndex + 1, selectedBookingClientIds.length);
+
+            return (
+              <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">
+                <div className="font-semibold">
+                  Selected: {selectedNames.join(' + ')}
+                </div>
+                <div className="mt-0.5 text-xs sm:text-sm">
+                  Now booking <strong>{progressNumber} of {selectedBookingClientIds.length}</strong>: <strong>{activePerson?.firstName || 'family member'}</strong>.
+                  {familyBookingDrafts.length > 0 && <span> Previous selections are saved and all appointments will be submitted together.</span>}
+                </div>
+              </div>
+            );
+          })()}
 
           {selectedBookingClientIds.length > 1 && familyBookingDrafts.length === 0 && (
             <div className="mt-2 rounded border border-blue-200 bg-white p-2">
@@ -1585,38 +1648,104 @@ return (
             {familyBookingPeople.map((person) => {
               const personId = String(person._id || '');
               const selected = selectedBookingClientIds.includes(personId);
+              const activeCount = Number(person.activeAppointmentCount ?? person.upcomingAppointments?.length ?? 0);
+              const atLimit = activeCount >= 2;
               return (
                 <button
                   type="button"
                   key={personId}
                   onClick={() => toggleBookingPerson(personId)}
-                  disabled={familyBookingDrafts.length > 0}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold disabled:opacity-60 ${selected ? (personId === String(activeBookingClientId) ? 'border-green-600 bg-green-600 text-white' : 'border-blue-600 bg-blue-600 text-white') : 'border-blue-200 bg-white text-blue-800'}`}
+                  disabled={familyBookingDrafts.length > 0 || (!selected && atLimit)}
+                  title={atLimit ? 'Two active appointments already. Contact the salon for another appointment.' : ''}
+                  aria-pressed={selected}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-60 ${selected ? `border-green-600 bg-green-600 text-white ${personId === String(activeBookingClientId) ? 'ring-2 ring-green-200 ring-offset-1' : ''}` : 'border-blue-200 bg-white text-blue-800 hover:border-blue-400'}`}
                 >
-                  {person.relationship === 'self' ? 'Me — ' : ''}{person.firstName} {person.lastName}
-                  {person.relationship && person.relationship !== 'self' && person.relationship !== 'family' ? ` (${person.relationship})` : ''}
+                  {selected && <span aria-hidden="true" className="text-sm leading-none">✓</span>}
+                  <span>{person.relationship === 'self' ? 'Me — ' : ''}{person.firstName} {person.lastName}
+                  {person.relationship && person.relationship !== 'self' && person.relationship !== 'family' ? ` (${person.relationship})` : ''}</span>
+                  {atLimit && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900">2 active</span>}
                 </button>
               );
             })}
           </div>
 
+          {selectedFamilyAppointmentRows.length > 0 && (
+            <div className="mt-2 space-y-2">
+              {selectedFamilyAppointmentRows.map(({ member, appointment, canEdit }) => (
+                <div key={`${member._id}-${getEditingId(appointment) || appointment.date || 'active'}`} className="flex flex-wrap items-center justify-between gap-2 rounded border border-emerald-200 bg-white px-3 py-2 text-xs text-gray-800">
+                  <div className="min-w-0">
+                    <span className="font-semibold text-emerald-800">Active appointment — {member.relationship === 'self' ? 'Me' : (member.firstName || 'Family member')}:</span>{' '}
+                    <span>{appointment.service?.name || appointment.service || 'Service'} • {appointment.date} @ {format24To12(appointment.time)}</span>
+                    {appointment.status && <span className="ml-1 uppercase text-gray-500">({appointment.status})</span>}
+                  </div>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => editFamilyAppointment(appointment)}
+                      className="shrink-0 rounded border border-blue-300 bg-white px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {showAddFamilyMember && (
             <div className="mt-3 grid grid-cols-1 gap-2 rounded border border-blue-200 bg-white p-2 sm:grid-cols-2">
-              <input className="rounded border p-2 text-sm" placeholder="First name" value={familyMemberForm.firstName} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, firstName: e.target.value }))} />
-              <input className="rounded border p-2 text-sm" placeholder="Last name" value={familyMemberForm.lastName} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, lastName: e.target.value }))} />
-              <input className="rounded border p-2 text-sm" inputMode="tel" placeholder="10-digit phone" value={familyMemberForm.phone} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, phone: e.target.value }))} />
-              <select className="rounded border p-2 text-sm" value={familyMemberForm.relationship} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, relationship: e.target.value }))}>
-                <option value="family">Family</option>
-                <option value="spouse">Spouse</option>
-                <option value="child">Child</option>
-                <option value="parent">Parent</option>
-                <option value="sibling">Sibling</option>
-              </select>
-              <div className="flex gap-2 sm:col-span-2">
+              <label className="text-xs font-semibold text-gray-800">First name <span className="text-red-600">*</span>
+                <input className="mt-1 w-full rounded border p-2 text-sm font-normal" placeholder="First name" value={familyMemberForm.firstName} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, firstName: e.target.value }))} />
+              </label>
+              <label className="text-xs font-semibold text-gray-800">Last name <span className="text-red-600">*</span>
+                <input className="mt-1 w-full rounded border p-2 text-sm font-normal" placeholder="Last name" value={familyMemberForm.lastName} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, lastName: e.target.value }))} />
+              </label>
+              {!familyNoPhoneMode && (
+                <label className="text-xs font-semibold text-gray-800">Phone number <span className="text-red-600">*</span>
+                  <input ref={familyPhoneInputRef} aria-invalid={Boolean(familyPhoneFieldError)} className={`mt-1 w-full rounded border p-2 text-sm font-normal ${familyPhoneFieldError ? 'border-red-500 ring-1 ring-red-500' : ''}`} inputMode="tel" placeholder="10-digit phone" value={familyMemberForm.phone} onChange={(e) => { setFamilyPhoneFieldError(''); setFamilyMemberForm((v) => ({ ...v, phone: e.target.value })); }} />
+                  {familyPhoneFieldError && <span className="mt-1 block text-[11px] font-semibold text-red-600">{familyPhoneFieldError}</span>}
+                </label>
+              )}
+              <label className="text-xs font-semibold text-gray-800">Relationship <span className="text-red-600">*</span>
+                <select className="mt-1 w-full rounded border p-2 text-sm font-normal" value={familyMemberForm.relationship} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, relationship: e.target.value }))}>
+                  {familyNoPhoneMode ? (
+                    <>
+                      <option value="child">Child</option>
+                      <option value="stepchild">Stepchild</option>
+                      <option value="foster_child">Foster child</option>
+                      <option value="legal_ward">Legal ward</option>
+                      <option value="grandchild">Grandchild in my care</option>
+                      <option value="minor_sibling">Minor sibling in my care</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="family">Family</option>
+                      <option value="spouse">Spouse</option>
+                      <option value="child">Child</option>
+                      <option value="parent">Parent</option>
+                      <option value="sibling">Sibling</option>
+                    </>
+                  )}
+                </select>
+              </label>
+              {familyNoPhoneMode && (
+                <>
+                  <label className="text-xs font-semibold text-gray-800">Date of birth <span className="text-red-600">*</span>
+                    <input type="date" className="mt-1 w-full rounded border p-2 text-sm font-normal" value={familyMemberForm.dob} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, dob: e.target.value }))} />
+                  </label>
+                  <label className="flex items-start gap-2 rounded border bg-amber-50 p-3 text-xs sm:col-span-2">
+                    <input type="checkbox" className="mt-0.5" checked={Boolean(familyMemberForm.guardianAttestation)} onChange={(e) => setFamilyMemberForm((v) => ({ ...v, guardianAttestation: e.target.checked }))} />
+                    <span>I confirm this person is under 18, does not have their own phone, and I am authorized to manage their salon appointments.</span>
+                  </label>
+                  <p className="text-[11px] text-gray-600 sm:col-span-2">Adults without a phone must be added by salon staff.</p>
+                </>
+              )}
+              <div className="flex flex-wrap gap-2 sm:col-span-2">
                 <button type="button" disabled={familySaving} onClick={addFamilyMember} className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                  {familySaving ? 'Adding…' : 'Add and select'}
+                  {familySaving ? 'Adding…' : (familyNoPhoneMode ? 'Add minor and select' : 'Add and select')}
                 </button>
-                <button type="button" onClick={() => setShowAddFamilyMember(false)} className="rounded border px-3 py-2 text-sm">Cancel</button>
+                {familyNoPhoneMode && <button type="button" onClick={() => { setFamilyNoPhoneMode(false); setFamilyPhoneFieldError(''); setFamilyMemberForm((v) => ({ ...v, relationship: 'family', dob: '', guardianAttestation: false })); }} className="rounded border px-3 py-2 text-sm">Use phone number</button>}
+                <button type="button" onClick={() => { setShowAddFamilyMember(false); setFamilyNoPhoneMode(false); setFamilyPhoneFieldError(''); }} className="rounded border px-3 py-2 text-sm">Cancel</button>
               </div>
             </div>
           )}
@@ -1624,6 +1753,18 @@ return (
             </section>
           )}
         </div>
+      )}
+
+      {familyPhonePromptOpen && createPortal(
+        <div className="fixed inset-0 flex items-center justify-center bg-black/55 p-4" style={{ zIndex: 100000 }} role="alertdialog" aria-modal="true" aria-label="Phone number required">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 text-center shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900">Phone number required</h3>
+            <p className="mt-2 text-sm text-gray-700">{familyPhonePromptMessage}</p>
+            <button type="button" onClick={() => { setFamilyPhonePromptOpen(false); setTimeout(() => familyPhoneInputRef.current?.focus(), 0); }} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2.5 font-bold text-white">OK</button>
+            <button type="button" onClick={() => { setFamilyPhonePromptOpen(false); setFamilyPhoneFieldError(''); setFamilyNoPhoneMode(true); setFamilyMemberForm((v) => ({ ...v, phone: '', relationship: 'child', dob: '', guardianAttestation: false })); }} className="mt-3 text-xs font-semibold text-blue-700 underline">This family member does not have a phone</button>
+          </div>
+        </div>,
+        document.body
       )}
 
       {scheduleNoticeCount > 0 && (
@@ -2104,6 +2245,32 @@ dayCellClassNames={({ date }) => {
   )}
 </div>
 
+
+      {showFamilyScheduleHub && effectiveClient && (
+        <FamilyHub
+          client={effectiveClient}
+          onClose={() => setShowFamilyScheduleHub(false)}
+          onBook={(clientIds) => {
+            const validIds = (Array.isArray(clientIds) ? clientIds : []).map((id) => String(id)).filter(Boolean).slice(0, 2);
+            if (validIds.length) {
+              setSelectedBookingClientIds(validIds);
+              setActiveFamilyBookingIndex(0);
+              setFamilyBookingDrafts([]);
+              setFamilyStepSelections({});
+              setShowFamilyBookingPanel(true);
+            }
+            setShowFamilyScheduleHub(false);
+          }}
+          onEditAppointment={(appointment) => {
+            try {
+              sessionStorage.setItem('editingAppointment', JSON.stringify(appointment));
+            } catch (error) {
+              console.error('Unable to prepare family appointment edit:', error);
+            }
+            window.location.assign('/booking/schedule');
+          }}
+        />
+      )}
 
       <img src={logo} alt="Rakie Salon Logo" className="fixed bottom-4 right-4 w-16 h-16 opacity-20 pointer-events-none" />
     

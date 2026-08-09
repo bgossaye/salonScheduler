@@ -5,12 +5,14 @@ const Client = require('../../models/client');
 const Appointment = require('../../models/appointment');
 const Worker = require('../../models/worker');
 const AdminNotification = require('../../models/adminnotification');
+const FamilyInvitationAudit = require('../../models/familyinvitationaudit');
 const Otp = require('../../models/otp');
 const sendSMS = require('../../utils/sendSMS');
 const sendOtpSMS = require('../../utils/sendOtpSMS');
 const auth = require('../../middleware/authmiddleware');
 
 const { alertOps: opsAlert } = require('../../utils/opsAlert');
+const { getRuntimeNumber, getRuntimeString } = require('../../utils/runtimeSettings');
 
 
 function can(req, permissionKey) {
@@ -83,6 +85,114 @@ function actorName(req) {
 
 function clientFullName(client) {
   return [client?.firstName, client?.lastName].filter(Boolean).join(' ').trim() || 'Client';
+}
+
+function makeAdminFamilyInvitationToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+function hashAdminFamilyInvitationToken(token = '') {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+async function adminFamilyInvitationUrl(token) {
+  let base = await getRuntimeString(
+    'family.invitation.baseUrl',
+    process.env.FAMILY_INVITATION_BASE_URL || process.env.FRONTEND_BASE_URL || 'https://rakiesalon.com/booking'
+  );
+  base = String(base || 'https://rakiesalon.com/booking').trim().replace(/\/+$/, '');
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(base)) base = `${base}/booking`;
+  return `${base}/family-invitation/${encodeURIComponent(token)}`;
+}
+function ageFromDob(dob) {
+  const d = dob ? new Date(dob) : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
+  return age;
+}
+function normalizedRelationship(value = '') {
+  return String(value || 'family').trim().slice(0, 60) || 'family';
+}
+function familyLinkFor(client, otherId) {
+  return (client?.familyLinks || []).find((item) => String(item.clientId?._id || item.clientId || '') === String(otherId || ''));
+}
+async function adminFamilyOverviewFor(client) {
+  if (!client) return { client: null, members: [] };
+  const populated = await Client.findById(client._id)
+    .select('firstName lastName phone dob profileType guardianClientId relationshipToGuardian managedByClientId assignedStylistId familyLinks')
+    .populate({ path: 'familyLinks.clientId', select: 'firstName lastName phone dob profileType guardianClientId relationshipToGuardian managedByClientId assignedStylistId' })
+    .populate({ path: 'guardianClientId', select: 'firstName lastName phone' })
+    .lean();
+  if (!populated) return { client: null, members: [] };
+
+  const activeLinks = (populated.familyLinks || []).filter((link) => String(link.status || '') === 'active');
+  const memberIds = activeLinks.map((link) => link.clientId?._id || link.clientId).filter(Boolean);
+  const allIds = [populated._id, ...memberIds];
+
+  const upcoming = await Appointment.find({
+    clientId: { $in: allIds },
+    status: { $in: ['pending', 'booked', 'confirmed'] },
+    archived: { $ne: true },
+  })
+    .select('clientId date time status service serviceId workerName')
+    .sort({ date: 1, time: 1 })
+    .lean();
+
+  const apptsByClient = new Map();
+  for (const appt of upcoming) {
+    const key = String(appt.clientId || '');
+    if (!apptsByClient.has(key)) apptsByClient.set(key, []);
+    apptsByClient.get(key).push(appt);
+  }
+
+  const members = activeLinks.map((link) => {
+    const other = link.clientId || {};
+    const id = other._id || link.clientId;
+    const appts = apptsByClient.get(String(id)) || [];
+    return {
+      _id: id,
+      firstName: other.firstName || '',
+      lastName: other.lastName || '',
+      phone: other.phone || null,
+      dob: other.dob || null,
+      profileType: other.profileType || 'independent',
+      relationshipToGuardian: other.relationshipToGuardian || '',
+      assignedStylistId: other.assignedStylistId || null,
+      relationship: link.relationship || 'family',
+      direction: link.direction || 'reciprocal',
+      permissions: {
+        canBook: link.permissions?.canBook !== false,
+        canViewUpcoming: link.permissions?.canViewUpcoming !== false,
+        canCancel: link.permissions?.canCancel === true,
+        canEditProfile: link.permissions?.canEditProfile === true,
+      },
+      upcomingCount: appts.length,
+      upcomingAppointments: appts,
+      nextAppointment: appts[0] || null,
+      isManagedMinor: String(other.profileType || '') === 'minor_dependent' && String(other.guardianClientId || '') === String(populated._id),
+    };
+  });
+
+  return {
+    client: {
+      _id: populated._id,
+      firstName: populated.firstName || '',
+      lastName: populated.lastName || '',
+      phone: populated.phone || null,
+      dob: populated.dob || null,
+      profileType: populated.profileType || 'independent',
+      guardianClientId: populated.guardianClientId || null,
+      guardian: populated.guardianClientId && typeof populated.guardianClientId === 'object' ? populated.guardianClientId : null,
+      relationshipToGuardian: populated.relationshipToGuardian || '',
+      assignedStylistId: populated.assignedStylistId || null,
+      upcomingCount: (apptsByClient.get(String(populated._id)) || []).length,
+      upcomingAppointments: apptsByClient.get(String(populated._id)) || [],
+      nextAppointment: (apptsByClient.get(String(populated._id)) || [])[0] || null,
+    },
+    members,
+    activeScheduleCount: upcoming.length,
+  };
 }
 
 function idOf(value) {
@@ -714,10 +824,291 @@ exports.setPinWithOtp = async (req, res) => {
 
 exports.verifyOtpOnly = exports.verifyPinOtp;
 
+
+exports.getAdminFamilyOverview = async (req, res) => {
+  try {
+    const client = await Client.findById(req.params.id).lean();
+    if (!client) return res.status(404).json({ error: 'Client not found.' });
+    if (!can(req, 'clientsViewAll')) {
+      if (!can(req, 'clientsViewAssigned') || !myWorkerId(req) || String(client.assignedStylistId || '') !== myWorkerId(req)) {
+        return res.status(403).json({ error: 'Forbidden', permission: 'clientsViewAssigned' });
+      }
+    }
+    const overview = await adminFamilyOverviewFor(client);
+    return res.json(overview);
+  } catch (err) {
+    console.error('getAdminFamilyOverview failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not load family group.' });
+  }
+};
+
+exports.linkExistingFamilyMember = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).exec();
+    if (!owner) return res.status(404).json({ error: 'Client not found.' });
+
+    const memberId = String(req.body?.memberId || '').trim();
+    const memberPhone = phone10(req.body?.phone || '');
+    const other = memberId
+      ? await Client.findById(memberId).exec()
+      : (/^\d{10}$/.test(memberPhone) ? await Client.findOne({ phone: memberPhone }).exec() : null);
+
+    if (!other) return res.status(404).json({ error: 'Family member client not found.' });
+    if (String(other._id) === String(owner._id)) return res.status(400).json({ error: 'A client cannot be linked to themselves.' });
+
+    const existing = familyLinkFor(owner, other._id);
+    const reverse = familyLinkFor(other, owner._id);
+    if (String(existing?.status || '') === 'blocked' || String(reverse?.status || '') === 'blocked') {
+      return res.status(409).json({ error: 'This pair has a reported invitation block. Use Allow Invitations Again first.' });
+    }
+
+    let declineHours = Number(await getRuntimeNumber('family.invitation.declineCooldownHours', 24));
+    if (!Number.isFinite(declineHours) || declineHours < 0) declineHours = 24;
+    const activeDecline = [existing, reverse].some((link) =>
+      String(link?.status || '') === 'declined' &&
+      !link?.unblockedAt &&
+      link?.respondedAt &&
+      Date.now() - new Date(link.respondedAt).getTime() < declineHours * 60 * 60 * 1000
+    );
+    if (activeDecline) {
+      return res.status(409).json({ error: 'This pair is still in a declined-invitation cooldown. Clear the cooldown first.' });
+    }
+
+    if (String(other.profileType || '') === 'minor_dependent' && other.guardianClientId && String(other.guardianClientId) !== String(owner._id)) {
+      return res.status(409).json({ error: 'This minor dependent already has another guardian. Reassign the guardian before linking.' });
+    }
+
+    const now = new Date();
+    const relationship = normalizedRelationship(req.body?.relationship);
+    const permissions = {
+      canBook: req.body?.permissions?.canBook !== false,
+      canViewUpcoming: req.body?.permissions?.canViewUpcoming !== false,
+      canCancel: req.body?.permissions?.canCancel === true,
+      canEditProfile: req.body?.permissions?.canEditProfile === true,
+    };
+    const applyLink = (doc, otherId, rel) => {
+      let link = familyLinkFor(doc, otherId);
+      if (!link) {
+        doc.familyLinks.push({ clientId: otherId, relationship: rel });
+        link = doc.familyLinks[doc.familyLinks.length - 1];
+      }
+      link.relationship = rel;
+      link.status = 'active';
+      link.direction = 'reciprocal';
+      link.invitedByClientId = null;
+      link.permissions = permissions;
+      link.respondedAt = now;
+      link.reportedAt = null;
+      link.unblockedAt = now;
+      link.invitationTokenHash = '';
+      link.invitationExpiresAt = null;
+      link.invitationSentAt = null;
+    };
+    applyLink(owner, other._id, relationship);
+    applyLink(other, owner._id, relationship);
+
+    if (String(other.profileType || '') === 'minor_dependent' && !other.guardianClientId) {
+      other.guardianClientId = owner._id;
+      other.managedByClientId = owner._id;
+      other.relationshipToGuardian = relationship;
+    }
+
+    await Promise.all([owner.save(), other.save()]);
+    await FamilyInvitationAudit.create({
+      requesterClientId: owner._id,
+      inviteeClientId: other._id,
+      action: 'admin_linked',
+      actorType: 'admin',
+      actorAdminId: req.admin?.id || null,
+      reason: String(req.body?.reason || 'Staff linked existing clients as a family group.').slice(0, 500),
+      metadata: { relationship },
+    }).catch(() => {});
+
+    return res.json({ ok: true, message: `${clientFullName(other)} was linked to ${clientFullName(owner)}.`, family: await adminFamilyOverviewFor(owner) });
+  } catch (err) {
+    console.error('linkExistingFamilyMember failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not link this family member.' });
+  }
+};
+
+exports.createAdminFamilyDependent = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).exec();
+    if (!owner) return res.status(404).json({ error: 'Client not found.' });
+
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const relationship = normalizedRelationship(req.body?.relationship);
+    const dob = req.body?.dob ? new Date(req.body.dob) : null;
+    if (!firstName || !lastName) return res.status(400).json({ error: 'First name and last name are required.' });
+    if (dob && Number.isNaN(dob.getTime())) return res.status(400).json({ error: 'Date of birth is invalid.' });
+
+    const age = ageFromDob(dob);
+    const isMinor = age !== null && age < 18;
+    const dependent = await Client.create({
+      firstName,
+      lastName,
+      phone: null,
+      email: undefined,
+      dob: dob || undefined,
+      profileType: isMinor ? 'minor_dependent' : 'admin_no_phone',
+      guardianClientId: isMinor ? owner._id : null,
+      managedByClientId: isMinor ? owner._id : null,
+      relationshipToGuardian: isMinor ? relationship : '',
+      guardianAttestedAt: isMinor ? new Date() : null,
+      createdByType: 'admin',
+      createdById: req.admin?.id || null,
+      phoneVerified: false,
+      requiresNamePinUpgrade: true,
+      welcomeOffer: { code: '', amount: 0, status: 'void', source: 'admin_family_no_phone', grantedAt: new Date() },
+      familyLinks: [{
+        clientId: owner._id,
+        relationship,
+        status: 'active',
+        direction: 'reciprocal',
+        permissions: { canBook: true, canViewUpcoming: true, canCancel: false, canEditProfile: false },
+      }],
+    });
+
+    owner.familyLinks.push({
+      clientId: dependent._id,
+      relationship,
+      status: 'active',
+      direction: 'reciprocal',
+      permissions: { canBook: true, canViewUpcoming: true, canCancel: false, canEditProfile: isMinor },
+    });
+    await owner.save();
+
+    await FamilyInvitationAudit.create({
+      requesterClientId: owner._id,
+      inviteeClientId: dependent._id,
+      action: 'admin_dependent_created',
+      actorType: 'admin',
+      actorAdminId: req.admin?.id || null,
+      reason: isMinor ? 'Staff created a no-phone minor dependent.' : 'Staff created a no-phone family profile.',
+      metadata: { relationship, profileType: dependent.profileType },
+    }).catch(() => {});
+
+    return res.status(201).json({ ok: true, message: `${clientFullName(dependent)} was added to the family group.`, dependent: safeClient(dependent), family: await adminFamilyOverviewFor(owner) });
+  } catch (err) {
+    console.error('createAdminFamilyDependent failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not create the family dependent.' });
+  }
+};
+
+exports.unlinkAdminFamilyMember = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).exec();
+    const other = await Client.findById(req.params.memberId).exec();
+    if (!owner || !other) return res.status(404).json({ error: 'Client not found.' });
+
+    if (String(other.profileType || '') === 'minor_dependent' && String(other.guardianClientId || '') === String(owner._id)) {
+      return res.status(409).json({ error: 'This is a guardian-managed minor. Reassign or update the guardian relationship instead of unlinking it.' });
+    }
+
+    owner.familyLinks = (owner.familyLinks || []).filter((item) => String(item.clientId?._id || item.clientId || '') !== String(other._id));
+    other.familyLinks = (other.familyLinks || []).filter((item) => String(item.clientId?._id || item.clientId || '') !== String(owner._id));
+    await Promise.all([owner.save(), other.save()]);
+
+    await FamilyInvitationAudit.create({
+      requesterClientId: owner._id,
+      inviteeClientId: other._id,
+      action: 'admin_unlinked',
+      actorType: 'admin',
+      actorAdminId: req.admin?.id || null,
+      reason: String(req.body?.reason || 'Staff removed the family link.').slice(0, 500),
+    }).catch(() => {});
+
+    return res.json({ ok: true, message: 'Family link removed.', family: await adminFamilyOverviewFor(owner) });
+  } catch (err) {
+    console.error('unlinkAdminFamilyMember failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not remove the family link.' });
+  }
+};
+
+exports.cancelPendingFamilyInvitation = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).exec();
+    const other = await Client.findById(req.params.memberId).exec();
+    if (!owner || !other) return res.status(404).json({ error: 'Client not found.' });
+    const link = familyLinkFor(owner, other._id);
+    const reverse = familyLinkFor(other, owner._id);
+    if (String(link?.status || '') !== 'pending' && String(reverse?.status || '') !== 'pending') {
+      return res.status(409).json({ error: 'There is no pending family invitation for this pair.' });
+    }
+    const requesterId = link?.invitedByClientId || reverse?.invitedByClientId || (String(link?.direction || '') === 'incoming' ? other._id : owner._id);
+    const requester = String(requesterId) === String(owner._id) ? owner : other;
+    const invitee = String(requesterId) === String(owner._id) ? other : owner;
+    owner.familyLinks = (owner.familyLinks || []).filter((item) => String(item.clientId?._id || item.clientId || '') !== String(other._id));
+    other.familyLinks = (other.familyLinks || []).filter((item) => String(item.clientId?._id || item.clientId || '') !== String(owner._id));
+    await Promise.all([owner.save(), other.save()]);
+    await FamilyInvitationAudit.create({
+      requesterClientId: requester._id,
+      inviteeClientId: invitee._id,
+      action: 'canceled',
+      actorType: 'admin',
+      actorAdminId: req.admin?.id || null,
+      reason: String(req.body?.reason || 'Staff canceled the pending family invitation.').slice(0, 500),
+    }).catch(() => {});
+    return res.json({ ok: true, message: 'Pending family invitation canceled.', family: await adminFamilyOverviewFor(owner) });
+  } catch (err) {
+    console.error('cancelPendingFamilyInvitation failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not cancel the pending invitation.' });
+  }
+};
+
+exports.resendPendingFamilyInvitation = async (req, res) => {
+  try {
+    const owner = await Client.findById(req.params.id).exec();
+    const other = await Client.findById(req.params.memberId).exec();
+    if (!owner || !other) return res.status(404).json({ error: 'Client not found.' });
+    const link = familyLinkFor(owner, other._id);
+    const reverse = familyLinkFor(other, owner._id);
+    if (String(link?.status || '') !== 'pending' && String(reverse?.status || '') !== 'pending') {
+      return res.status(409).json({ error: 'There is no pending family invitation for this pair.' });
+    }
+    if (!other.phone) return res.status(409).json({ error: 'The invited client does not have a phone number for SMS delivery.' });
+
+    const requesterId = link?.invitedByClientId || reverse?.invitedByClientId || (String(link?.direction || '') === 'incoming' ? other._id : owner._id);
+    const requester = String(requesterId) === String(owner._id) ? owner : other;
+    const invitee = String(requesterId) === String(owner._id) ? other : owner;
+
+    const token = makeAdminFamilyInvitationToken();
+    const tokenHash = hashAdminFamilyInvitationToken(token);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    for (const item of [link, reverse].filter(Boolean)) {
+      item.invitationTokenHash = tokenHash;
+      item.invitationExpiresAt = expiresAt;
+      item.invitationSentAt = now;
+      item.unblockedAt = null;
+    }
+    await Promise.all([owner.save(), other.save()]);
+    const url = await adminFamilyInvitationUrl(token);
+    const message = `${requester.firstName || 'A Rakie Salon client'} invited you to join their Rakie Salon family for booking. Review: ${url}`;
+    const sent = await sendSMS('family_invite', { clientId: invitee }, { message });
+    await FamilyInvitationAudit.create({
+      requesterClientId: requester._id,
+      inviteeClientId: invitee._id,
+      action: 'resent',
+      actorType: 'admin',
+      actorAdminId: req.admin?.id || null,
+      reason: 'Staff resent the pending family invitation.',
+    }).catch(() => {});
+    if (!sent) return res.status(503).json({ error: 'The invitation remains pending, but the SMS could not be sent. Please try again.' });
+    return res.json({ ok: true, message: 'Family invitation resent successfully.', expiresAt });
+  } catch (err) {
+    console.error('resendPendingFamilyInvitation failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not resend the family invitation.' });
+  }
+};
+
+
 exports.getClientDetails = async (req, res) => {
   try {
     const client = await Client.findById(req.params.id)
-      .select('-pinHash -pinOtpHash -pinOtpExpires -pinOtpAttempts');
+      .select('-pinHash -pinOtpHash -pinOtpExpires -pinOtpAttempts')
+      .populate({ path: 'familyLinks.clientId', select: 'firstName lastName phone dob profileType guardianClientId relationshipToGuardian managedByClientId assignedStylistId' });
 
     if (!client) {
       return res.status(404).json({ error: 'Client not found' });
@@ -736,6 +1127,82 @@ exports.getClientDetails = async (req, res) => {
       .sort({ date: -1, time: -1 })
       .select('date service');
 
+    const familyInvitationBlocks = (client.familyLinks || [])
+      .filter((link) => String(link.status) === 'blocked')
+      .map((link) => {
+        const other = link.clientId || {};
+        const isIncoming = String(link.direction) === 'incoming';
+        return {
+          memberId: other._id || link.clientId,
+          otherClientName: [other.firstName, other.lastName].filter(Boolean).join(' ') || 'Client',
+          otherPhoneLast4: String(other.phone || '').replace(/\D/g, '').slice(-4),
+          relationship: link.relationship || 'family',
+          direction: link.direction || '',
+          requesterClientId: link.invitedByClientId || (isIncoming ? other._id : client._id),
+          inviteeClientId: isIncoming ? client._id : other._id,
+          reportedAt: link.reportedAt || link.respondedAt || null,
+        };
+      });
+
+    let declineCooldownHours = Number(await getRuntimeNumber('family.invitation.declineCooldownHours', 24));
+    if (!Number.isFinite(declineCooldownHours) || declineCooldownHours < 0) declineCooldownHours = 24;
+    declineCooldownHours = Math.min(declineCooldownHours, 24 * 30);
+    const declineCooldownMs = declineCooldownHours * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const familyInvitationDeclines = (client.familyLinks || [])
+      .filter((link) => String(link.status) === 'declined' && !link.unblockedAt && link.respondedAt)
+      .map((link) => {
+        const other = link.clientId || {};
+        const respondedAtMs = new Date(link.respondedAt).getTime();
+        const remainingMs = Math.max(0, declineCooldownMs - (nowMs - respondedAtMs));
+        const isIncoming = String(link.direction) === 'incoming';
+        return {
+          memberId: other._id || link.clientId,
+          otherClientName: [other.firstName, other.lastName].filter(Boolean).join(' ') || 'Client',
+          otherPhoneLast4: String(other.phone || '').replace(/\D/g, '').slice(-4),
+          relationship: link.relationship || 'family',
+          direction: link.direction || '',
+          requesterClientId: link.invitedByClientId || (isIncoming ? other._id : client._id),
+          inviteeClientId: isIncoming ? client._id : other._id,
+          declinedAt: link.respondedAt,
+          remainingMs,
+          remainingSeconds: Math.ceil(remainingMs / 1000),
+          remainingMinutes: Math.ceil(remainingMs / (60 * 1000)),
+          remainingHours: Math.ceil(remainingMs / (60 * 60 * 1000)),
+          cooldownEndsAt: new Date(respondedAtMs + declineCooldownMs),
+          active: remainingMs > 0,
+        };
+      })
+      .filter((item) => item.active);
+
+    const familyInvitationAudit = await FamilyInvitationAudit.find({
+      $or: [{ requesterClientId: client._id }, { inviteeClientId: client._id }],
+    })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .populate('requesterClientId inviteeClientId', 'firstName lastName')
+      .populate('actorAdminId', 'firstName lastName email')
+      .lean();
+
+    const familyOverview = await adminFamilyOverviewFor(client);
+
+    const familyRelationshipSummary = (client.familyLinks || []).map((link) => {
+      const other = link.clientId || {};
+      return {
+        _id: other._id || link.clientId,
+        firstName: other.firstName || link.invitationFirstName || '',
+        lastName: other.lastName || link.invitationLastName || '',
+        phone: other.phone || null,
+        relationship: link.relationship || 'family',
+        status: link.status || 'active',
+        direction: link.direction || '',
+        permissions: link.permissions || {},
+        respondedAt: link.respondedAt || null,
+        invitationSentAt: link.invitationSentAt || null,
+        profileType: other.profileType || 'independent',
+      };
+    });
+
     return res.json({
       _id: client._id,
       firstName: client.firstName,
@@ -750,16 +1217,152 @@ exports.getClientDetails = async (req, res) => {
       paymentInfo: client.paymentInfo,
       profilePhoto: client.profilePhoto,
       visitFrequency: client.visitFrequency,
+      profileType: client.profileType || 'independent',
+      guardianClientId: client.guardianClientId || null,
+      relationshipToGuardian: client.relationshipToGuardian || '',
+      managedByClientId: client.managedByClientId || null,
+      familyOverview,
+      familyRelationshipSummary,
       contactPreferences: {
         method: client.contactPreferences?.method,
         optInPromotions: client.contactPreferences?.optInPromotions === true,
         emailDisabled: client.contactPreferences?.emailDisabled === true,
       },
+      familyInvitationBlocks,
+      familyInvitationDeclines,
+      declineCooldownHours,
+      familyInvitationAudit,
       lastCompletedAppointment,
     });
   } catch (err) {
     console.error('Error fetching client details:', err);
     return res.status(400).json({ error: 'Client not found' });
+  }
+};
+
+exports.clearFamilyInvitationDeclineCooldown = async (req, res) => {
+  try {
+    const client = await Client.findById(req.params.id).exec();
+    const other = await Client.findById(req.params.memberId).exec();
+    if (!client || !other) return res.status(404).json({ error: 'Client not found.' });
+
+    const link = (client.familyLinks || []).find((item) => String(item.clientId) === String(other._id));
+    const reverse = (other.familyLinks || []).find((item) => String(item.clientId) === String(client._id));
+    if (!link && !reverse) return res.status(404).json({ error: 'Family invitation relationship not found.' });
+    if (String(link?.status || '') !== 'declined' && String(reverse?.status || '') !== 'declined') {
+      return res.status(409).json({ error: 'This family invitation pair does not have a declined invitation cooldown.' });
+    }
+
+    const now = new Date();
+    const reason = String(req.body?.reason || 'Staff allowed a new family invitation before the decline cooldown ended.').trim().slice(0, 500);
+    for (const item of [link, reverse].filter(Boolean)) {
+      if (String(item.status) === 'declined') {
+        item.unblockedAt = now;
+        item.unblockedByAdminId = req.admin?.id || null;
+        item.unblockReason = reason;
+        item.invitationTokenHash = '';
+        item.invitationExpiresAt = null;
+      }
+    }
+    await Promise.all([client.save(), other.save()]);
+
+    await FamilyInvitationAudit.create({ requesterClientId: client._id, inviteeClientId: other._id, action: 'decline_override', actorType: 'admin', actorAdminId: req.admin?.id || null, reason: 'Staff allowed a new family invitation before the decline cooldown expired.' }).catch((err) => console.error('[decline override audit] failed:', err?.message || err));
+    return res.json({
+      ok: true,
+      message: 'Decline cooldown cleared. A brand-new family invitation can be sent now.',
+    });
+  } catch (err) {
+    console.error('clearFamilyInvitationDeclineCooldown failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not clear the declined invitation cooldown.' });
+  }
+};
+
+exports.unblockFamilyInvitations = async (req, res) => {
+  try {
+    const client = await Client.findById(req.params.id).exec();
+    const other = await Client.findById(req.params.memberId).exec();
+    if (!client || !other) return res.status(404).json({ error: 'Client not found.' });
+
+    const link = (client.familyLinks || []).find((item) => String(item.clientId) === String(other._id));
+    const reverse = (other.familyLinks || []).find((item) => String(item.clientId) === String(client._id));
+    if (!link && !reverse) return res.status(404).json({ error: 'Family invitation relationship not found.' });
+    if (String(link?.status || '') !== 'blocked' && String(reverse?.status || '') !== 'blocked') {
+      return res.status(409).json({ error: 'This family invitation pair is not blocked.' });
+    }
+
+    const requesterId = link?.invitedByClientId || reverse?.invitedByClientId || (String(link?.direction) === 'outgoing' ? client._id : other._id);
+    const requesterIsClient = String(requesterId) === String(client._id);
+    const requester = requesterIsClient ? client : other;
+    const invitee = requesterIsClient ? other : client;
+    const now = new Date();
+    const reason = String(req.body?.reason || 'Staff approved future family invitations.').trim().slice(0, 500);
+
+    for (const item of [link, reverse].filter(Boolean)) {
+      item.status = 'declined';
+      item.unblockedAt = now;
+      item.unblockedByAdminId = req.admin?.id || null;
+      item.unblockReason = reason;
+      item.invitationTokenHash = '';
+      item.invitationExpiresAt = null;
+    }
+
+    await Promise.all([client.save(), other.save()]);
+
+    // Older blocked links may predate the dedicated audit collection. Backfill the
+    // report once before recording the unblock so the original security event is
+    // not lost when a future invitation replaces the embedded family link.
+    const priorReport = await FamilyInvitationAudit.findOne({
+      requesterClientId: requester._id,
+      inviteeClientId: invitee._id,
+      action: 'reported',
+    }).lean();
+    if (!priorReport) {
+      await FamilyInvitationAudit.create({
+        requesterClientId: requester._id,
+        inviteeClientId: invitee._id,
+        action: 'reported',
+        actorType: 'system',
+        actorClientId: invitee._id,
+        reason: 'Backfilled from an existing reported family-invitation block.',
+        metadata: {
+          backfilled: true,
+          originalReportedAt: link?.reportedAt || reverse?.reportedAt || link?.respondedAt || reverse?.respondedAt || null,
+        },
+      });
+    }
+
+    await FamilyInvitationAudit.create({
+      requesterClientId: requester._id,
+      inviteeClientId: invitee._id,
+      action: 'unblocked',
+      actorType: 'admin',
+      actorAdminId: req.admin?.id || null,
+      reason,
+      metadata: { profileClientId: String(client._id) },
+    });
+    await AdminNotification.create({
+      type: 'family_invitation_unblocked',
+      severity: 'success',
+      title: 'Family invitation block removed',
+      message: `${clientFullName(requester)} may send a new family invitation to ${clientFullName(invitee)}. The previous report remains in the audit history.`,
+      actorAdminId: req.admin?.id || null,
+      actorName: actorName(req),
+      actorEmail: req.admin?.email || '',
+      clientId: invitee._id,
+      status: 'unread',
+      metadata: { requesterClientId: String(requester._id), inviteeClientId: String(invitee._id), reason },
+    });
+
+    return res.json({
+      success: true,
+      message: 'Family invitation block removed. A new invitation may now be sent.',
+      requesterClientId: requester._id,
+      inviteeClientId: invitee._id,
+      unblockedAt: now,
+    });
+  } catch (err) {
+    console.error('unblockFamilyInvitations failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not remove the family invitation block.' });
   }
 };
 

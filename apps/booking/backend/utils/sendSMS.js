@@ -22,7 +22,7 @@ const LEGACY_PUBLIC_BOOKING_URLS = new Set([
   'https://www.rakiesalon.com/booking',
   'https://www.rakiesalon.com/booking/',
 ]);
-const AUTH_TYPES = new Set(['pin_otp', 'pin_verified', 'pin_changed']);
+const AUTH_TYPES = new Set(['pin_otp', 'pin_verified', 'pin_changed', 'family_invite']);
 const APPOINTMENT_SMS_TYPES = new Set(['pending', 'confirmation', 'reminder', 'cancellation', 'noshow']);
 const SUPPORTED_SMS_TYPES = new Set([
   'pending',
@@ -37,6 +37,7 @@ const SUPPORTED_SMS_TYPES = new Set([
   'pin_otp',
   'pin_verified',
   'pin_changed',
+  'family_invite',
 ]);
 
 function normalizeSmsType(typeOrStatus) {

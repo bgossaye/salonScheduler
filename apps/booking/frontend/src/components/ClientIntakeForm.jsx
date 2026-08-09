@@ -28,7 +28,6 @@ export default function ClientIntakeForm({
   const qpPhone = propPhone || params.get('phone') || '';
 
   const PIN_HELP_PHONE = '5854146041';
-  const PIN_HELP_DISPLAY = '(585) 414-6041';
   const PIN_HELP_KEYWORD = 'RAKIE PIN';
 
   const [otp, setOtp] = useState('');
@@ -284,7 +283,12 @@ export default function ClientIntakeForm({
     }
 
     try {
-      await API.post('/clients/pin/verify-otp', { phone, otp, purpose: otpPurpose });
+      const { data } = await API.post('/clients/pin/verify-otp', { phone, otp, purpose: otpPurpose });
+      if (data?.clientToken) localStorage.setItem('clientToken', data.clientToken);
+      if (data?.client?._id) {
+        setClient(data.client);
+        setForm((prev) => ({ ...prev, ...sanitizeClient(data.client), phone }));
+      }
       setOtpVerified(true);
       setForm((prev) => ({ ...prev, phone }));
       setErrors((prev) => ({ ...prev, otp: '' }));
@@ -394,36 +398,40 @@ export default function ClientIntakeForm({
         ? await API.put(`/clients/${client._id}`, submissionData)
         : await API.post('/clients', submissionData);
 
-      setClient(response.data);
+      const responseToken = response.data?.clientToken || '';
+      const safeResponseData = { ...(response.data || {}) };
+      delete safeResponseData.clientToken;
+      if (responseToken) localStorage.setItem('clientToken', responseToken);
+      setClient(safeResponseData);
 
       if (embed && typeof onComplete === 'function') {
-        onComplete(response.data);
+        onComplete({ ...safeResponseData, ...(responseToken ? { clientToken: responseToken } : {}) });
         return;
       }
 
       try {
-        localStorage.setItem('clientPhone', response.data.phone || '');
-        localStorage.setItem('clientFirstName', response.data.firstName || '');
-        localStorage.setItem('clientLastName', response.data.lastName || '');
-        if (response.data._id) localStorage.setItem('clientId', response.data._id);
-        const displayName = [response.data.firstName, response.data.lastName].filter(Boolean).join(' ').trim();
+        localStorage.setItem('clientPhone', safeResponseData.phone || '');
+        localStorage.setItem('clientFirstName', safeResponseData.firstName || '');
+        localStorage.setItem('clientLastName', safeResponseData.lastName || '');
+        if (safeResponseData._id) localStorage.setItem('clientId', safeResponseData._id);
+        const displayName = [safeResponseData.firstName, safeResponseData.lastName].filter(Boolean).join(' ').trim();
         localStorage.setItem('clientDisplayName', displayName);
         localStorage.setItem('clientProfile', JSON.stringify({
-          _id: response.data._id,
-          firstName: response.data.firstName,
-          lastName: response.data.lastName,
-          phone: response.data.phone,
-          email: response.data.email || '',
+          _id: safeResponseData._id,
+          firstName: safeResponseData.firstName,
+          lastName: safeResponseData.lastName,
+          phone: safeResponseData.phone,
+          email: safeResponseData.email || '',
         }));
         localStorage.setItem('client', JSON.stringify({
-          _id: response.data._id,
-          firstName: response.data.firstName || '',
-          lastName: response.data.lastName || '',
-          phone: response.data.phone || '',
-          email: response.data.email || '',
+          _id: safeResponseData._id,
+          firstName: safeResponseData.firstName || '',
+          lastName: safeResponseData.lastName || '',
+          phone: safeResponseData.phone || '',
+          email: safeResponseData.email || '',
         }));
-        localStorage.setItem('lastPhone', response.data.phone || '');
-        if (response.data?.welcomeOffer?.code === 'NEWCLIENT10') {
+        localStorage.setItem('lastPhone', safeResponseData.phone || '');
+        if (safeResponseData?.welcomeOffer?.code === 'NEWCLIENT10') {
           localStorage.removeItem('pendingWelcomeOfferCode');
           localStorage.removeItem('pendingWelcomeOfferSource');
         }

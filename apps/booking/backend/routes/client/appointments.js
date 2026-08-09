@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../../controllers/client/appointmentcontroller');
+const authenticateClient = require('../../middleware/clientauthmiddleware');
 
-// Public/client appointment endpoints. Admin appointment management remains under /api/admin/appointments.
+// Client appointment endpoints. All appointment reads/writes require a signed-in client session.
+router.use(authenticateClient);
 router.get('/', controller.getClientAppointments);
 router.get('/client/:id', controller.getAppointmentsForClient);
 router.post('/', controller.createAppointment);

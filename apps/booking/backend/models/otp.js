@@ -5,7 +5,7 @@ const OtpSchema = new mongoose.Schema(
     phone: { type: String, required: true, index: true }, // digits-only 10-digit US phone
     purpose: {
       type: String,
-      enum: ['signup', 'reset', 'login', 'verify', 'pin_set'],
+      enum: ['signup', 'reset', 'login', 'verify', 'pin_set', 'family_accept'],
       default: 'reset',
       index: true,
     },

@@ -24,12 +24,14 @@ if (process.env.NODE_ENV !== 'production') {
 
 API.interceptors.request.use((config) => {
   try {
-    const token = typeof window !== 'undefined' ? window.localStorage.getItem('adminToken') : null;
+    const requestPath = String(config?.url || '');
+    const isAdminRequest = requestPath.startsWith('/admin') || requestPath.startsWith('/giftcards');
+    const adminToken = typeof window !== 'undefined' ? window.localStorage.getItem('adminToken') : null;
+    const clientToken = typeof window !== 'undefined' ? window.localStorage.getItem('clientToken') : null;
+    const token = isAdminRequest ? adminToken : (clientToken || adminToken);
     if (token) {
       config.headers = config.headers || {};
-      if (!config.headers.Authorization) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
+      if (!config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`;
     }
  } catch (error) { void error; }
 

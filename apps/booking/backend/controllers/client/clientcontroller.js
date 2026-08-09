@@ -1,11 +1,15 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const Client = require('../../models/client');
 const Otp = require('../../models/otp');
+const FamilyInvitationAudit = require('../../models/familyinvitationaudit');
+const AdminNotification = require('../../models/adminnotification');
 const sendSMS = require('../../utils/sendSMS');
 const sendOtpSMS = require('../../utils/sendOtpSMS');
 const { alertOps: opsAlert } = require('../../utils/opsAlert');
+const { getRuntimeBoolean, getRuntimeString, getRuntimeNumber } = require('../../utils/runtimeSettings');
 
 const SUPPORT = { tech: '(585) 414-6041' };
 const SUPPORT_SMS = '5854146041';
@@ -18,6 +22,114 @@ const OTP_MAX_ATTEMPTS = 5;
 const OTP_REQUESTS_PER_HOUR = 5;
 
 const otpBuckets = new Map();
+
+function makeFamilyInvitationToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+function hashFamilyInvitationToken(token = '') {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+async function familyInvitationUrl(token) {
+  let base = await getRuntimeString('family.invitation.baseUrl', process.env.FAMILY_INVITATION_BASE_URL || process.env.FRONTEND_BASE_URL || 'https://rakiesalon.com/booking');
+  base = String(base || 'https://rakiesalon.com/booking').trim().replace(/\/+$/, '');
+  // Local frontend normally serves the booking SPA under /booking.
+  // If a localhost base URL was configured without that prefix, add it so
+  // the debug link lands on the same route shape as production.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(base)) {
+    base = `${base}/booking`;
+  }
+  return `${base}/family-invitation/${encodeURIComponent(token)}`;
+}
+function logFamilyInvitationDebugUrl(inviteUrl, member = null) {
+  // Never log bearer invitation URLs in production, even if a stale debug env flag remains set.
+  const debugEnabled = process.env.NODE_ENV !== 'production' && String(process.env.FAMILY_INVITATION_DEBUG_LINK || 'true').toLowerCase() !== 'false';
+  if (!debugEnabled) return;
+
+  // The SMS/public invitation URL may intentionally use the production domain via
+  // Runtime Settings. For local testing, build a separate browser URL from the
+  // debug base so the same secure token can be exercised against the local SPA.
+  const tokenMarker = '/family-invitation/';
+  const tokenIndex = String(inviteUrl || '').lastIndexOf(tokenMarker);
+  const tokenPart = tokenIndex >= 0 ? String(inviteUrl).slice(tokenIndex + tokenMarker.length) : '';
+  let debugBase = String(
+    process.env.FAMILY_INVITATION_DEBUG_BASE_URL ||
+    process.env.FRONTEND_BASE_URL ||
+    'http://localhost:3001/booking'
+  ).trim().replace(/\/+$/, '');
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(debugBase)) {
+    debugBase = `${debugBase}/booking`;
+  }
+  const debugUrl = tokenPart ? `${debugBase}/family-invitation/${tokenPart}` : inviteUrl;
+  const suffix = member?.phone ? ` -> ***-***-${phone10(member.phone).slice(-4)}` : '';
+  console.info(`\n[FAMILY INVITATION DEBUG]${suffix}\nSMS URL: ${inviteUrl}\nLOCAL TEST URL: ${debugUrl}\n`);
+}
+
+
+async function familyInvitationDeclineCooldownHours() {
+  let hours = Number(await getRuntimeNumber('family.invitation.declineCooldownHours', 24));
+  // Allow very small fractional values for local/testing while keeping a sane production ceiling.
+  // 0.001 hour is about 3.6 seconds.
+  if (!Number.isFinite(hours) || hours < 0) hours = 24;
+  return Math.min(hours, 24 * 30);
+}
+function formatCooldownDuration(hours) {
+  const n = Number(hours);
+  if (!Number.isFinite(n)) return '24 hours';
+  if (n === 0) return 'no cooldown';
+  if (n < 1 / 60) return `${Math.max(1, Math.round(n * 3600))} second${Math.round(n * 3600) === 1 ? '' : 's'}`;
+  if (n < 1) return `${Math.max(1, Math.round(n * 60))} minute${Math.round(n * 60) === 1 ? '' : 's'}`;
+  const rounded = Number.isInteger(n) ? n : Number(n.toFixed(3));
+  return `${rounded} hour${rounded === 1 ? '' : 's'}`;
+}
+
+async function familyInvitationExpiry() {
+  let hours = Number(await getRuntimeNumber('family.invitation.linkExpiryHours', 48));
+  if (!Number.isFinite(hours) || hours < 1 || hours > 168) hours = 48;
+  return new Date(Date.now() + hours * 60 * 60 * 1000);
+}
+function clearFamilyInvitationToken(link) {
+  if (!link) return;
+  link.invitationTokenHash = '';
+  link.invitationExpiresAt = null;
+}
+
+async function recordFamilyInvitationAudit({ requester, invitee, action, actorType = 'system', actorClientId = null, actorAdminId = null, reason = '', metadata = {} }) {
+  if (!requester?._id || !invitee?._id || !action) return;
+  try {
+    await FamilyInvitationAudit.create({
+      requesterClientId: requester._id,
+      inviteeClientId: invitee._id,
+      action,
+      actorType,
+      actorClientId,
+      actorAdminId,
+      reason,
+      metadata,
+    });
+  } catch (err) {
+    console.error(`[family invitation audit:${action}] failed:`, err?.message || err);
+  }
+}
+
+async function recordFamilyInvitationReport({ requester, invitee, source = 'client' }) {
+  if (!requester?._id || !invitee?._id) return;
+  await Promise.all([
+    recordFamilyInvitationAudit({ requester, invitee, action: 'reported', actorType: source === 'public_link' ? 'public_link' : 'client', actorClientId: invitee._id, reason: 'Recipient reported the family invitation.' }),
+    AdminNotification.create({
+      type: 'family_invitation_reported',
+      severity: 'warning',
+      title: 'Family invitation reported',
+      message: `${String(invitee.firstName || 'A client').trim()} reported a family invitation from ${String(requester.firstName || 'another client').trim()}. Future invitations between this pair are blocked until staff allows them again.`,
+      clientId: invitee._id,
+      status: 'unread',
+      metadata: {
+        requesterClientId: String(requester._id),
+        inviteeClientId: String(invitee._id),
+        source,
+      },
+    }),
+  ]).catch((err) => console.error('[family invitation report audit] failed:', err?.message || err));
+}
 
 function onlyDigits(s = '') { return String(s || '').replace(/\D/g, ''); }
 function phone10(p = '') {
@@ -80,7 +192,13 @@ function duplicateClientResponse(res, existing, reason = 'duplicate') {
       : 'A client with that phone or email already exists.',
     code: 'CLIENT_ALREADY_EXISTS',
     reason,
-    existingClient: existing ? safeClient(existing) : null,
+    // Never disclose an existing customer's profile from an unauthenticated
+    // create/duplicate probe. The caller only needs to know that the account exists.
+    existingClient: existing ? {
+      exists: true,
+      requiresNamePinUpgrade: !!existing.requiresNamePinUpgrade,
+      pinIsDefault: !!existing.pinIsDefault,
+    } : null,
   });
 }
 async function findExistingClientByPhoneOrEmail({ phone, email, excludeId = null }) {
@@ -246,12 +364,35 @@ exports.getClients = async (req, res) => {
     const p10 = phone10(req.query?.phone || '');
     if (!p10) return res.status(400).json({ error: 'Phone is required for public client lookup.' });
     const client = await Client.findOne({ phone: p10 }).populate('assignedStylistId preferredStylistId lastStylistId');
-    return res.json(client ? safeClient(client) : null);
+    if (!client) return res.json(null);
+
+    // Before sign-in this endpoint is only an existence/PIN-state probe. Do not
+    // expose the customer's profile, DOB, preferences, family data, etc. to
+    // anyone who merely knows a phone number. A valid matching client session
+    // receives the normal safe profile.
+    if (String(req.client?.id || '') === String(client._id)) {
+      return res.json(safeClient(client));
+    }
+    return res.json({
+      _id: client._id,
+      exists: true,
+      requiresNamePinUpgrade: !!client.requiresNamePinUpgrade,
+      pinIsDefault: !!client.pinIsDefault,
+    });
   } catch (err) {
     console.error('public getClients failed:', err?.message || err);
     return res.status(500).json({ error: 'Server error' });
   }
 };
+
+function createClientSessionToken(client) {
+  if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is required for client sessions');
+  return jwt.sign(
+    { id: String(client._id), phone: normalizePhone(client.phone), tokenType: 'client' },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.CLIENT_SESSION_TTL || '30d' }
+  );
+}
 
 exports.loginClient = async (req, res) => {
   try {
@@ -310,7 +451,8 @@ exports.loginClient = async (req, res) => {
     const usingDefaultPin = !!doc.pinIsDefault && String(pin) === last4(doc.phone);
     const mustChangePin = !!doc.requiresNamePinUpgrade;
     const proceedToIntake = mustChangePin || !!updateInfo;
-    return res.json({ ...safeClient(doc), mustChangePin, proceedToIntake, usingDefaultPin });
+    const clientToken = createClientSessionToken(doc);
+    return res.json({ ...safeClient(doc), mustChangePin, proceedToIntake, usingDefaultPin, clientToken });
   } catch (err) {
     console.error('public loginClient error:', err?.message || err);
     return res.status(500).json({ error: 'Login failed' });
@@ -364,6 +506,11 @@ exports.verifyPinOtp = async (req, res) => {
     const result = await verifyOtpCode({ phone, purpose, otp, markVerified: true });
     if (!result.ok) return otpFailureResponse(res, phone, result.reason);
 
+    const client = await Client.findOne({ phone }).exec();
+    if (client) {
+      const clientToken = createClientSessionToken(client);
+      return res.json({ ok: true, verified: true, purpose, client: safeClient(client), clientToken });
+    }
     return res.json({ ok: true, verified: true, purpose });
   } catch (err) {
     console.error('public verifyPinOtp failed:', err?.message || err);
@@ -399,7 +546,8 @@ exports.setPinWithOtp = async (req, res) => {
     await client.save();
 
     const safe = safeClient(client);
-    res.json(safe);
+    const clientToken = createClientSessionToken(client);
+    res.json({ ...safe, clientToken });
 
     setImmediate(() => {
       sendSMS('pin_changed', { clientId: safe }, {
@@ -499,7 +647,8 @@ exports.createClient = async (req, res) => {
 
     const client = await new Client(newClient).save();
     const safe = safeClient(client);
-    res.status(201).json(safe);
+    const clientToken = createClientSessionToken(client);
+    res.status(201).json({ ...safe, clientToken });
 
     setImmediate(() => {
       sendSMS('pin_changed', { clientId: safe }, {
@@ -587,25 +736,36 @@ exports.updateClient = async (req, res) => {
 
 exports.verifyOtpOnly = exports.verifyPinOtp;
 
-function familyAuthMatches(owner, body = {}, query = {}) {
-  const submittedPhone = normalizePhone(body.ownerPhone || body.phone || query.ownerPhone || query.phone || '');
-  return !!owner && submittedPhone.length === 10 && normalizePhone(owner.phone) === submittedPhone;
-}
-
-function familyMemberSummary(client, relationship = 'family') {
+function familyMemberSummary(client, relationship = 'family', link = {}) {
   if (!client) return null;
   const safe = safeClient(client);
+  const useInvitationLabel = String(link.status || '') === 'pending' && String(link.direction || '') === 'outgoing';
   return {
     _id: safe._id,
-    firstName: safe.firstName,
-    lastName: safe.lastName,
-    phone: safe.phone,
+    firstName: useInvitationLabel && link.invitationFirstName ? link.invitationFirstName : safe.firstName,
+    lastName: useInvitationLabel && link.invitationLastName ? link.invitationLastName : safe.lastName,
+    phone: safe.phone || null,
     relationship,
+    linkStatus: link.status || 'active',
+    linkDirection: link.direction || 'reciprocal',
+    permissions: link.permissions || { canBook: true, canViewUpcoming: true, canCancel: false, canEditProfile: false },
+    profileType: safe.profileType || 'independent',
+    dob: safe.dob || null,
+    guardianClientId: safe.guardianClientId || null,
     managedByClientId: safe.managedByClientId || null,
     assignedStylistId: safe.assignedStylistId || null,
     preferredStylistId: safe.preferredStylistId || null,
     lastStylistId: safe.lastStylistId || null,
   };
+}
+
+function activeFamilyLink(link) {
+  return String(link?.status || 'active') === 'active';
+}
+
+function canManageDependent(ownerId, member) {
+  return member?.profileType === 'minor_dependent' &&
+    String(member?.guardianClientId || '') === String(ownerId || '');
 }
 
 exports.getFamilyMembers = async (req, res) => {
@@ -614,18 +774,19 @@ exports.getFamilyMembers = async (req, res) => {
       .select('firstName lastName phone familyLinks')
       .populate({
         path: 'familyLinks.clientId',
-        select: 'firstName lastName phone managedByClientId assignedStylistId preferredStylistId lastStylistId',
-      })
-      .lean();
+        select: 'firstName lastName phone dob profileType guardianClientId managedByClientId assignedStylistId preferredStylistId lastStylistId',
+      }).lean();
     if (!owner) return res.status(404).json({ error: 'Client not found' });
-    if (!familyAuthMatches(owner, {}, req.query || {})) {
-      return res.status(403).json({ error: 'Unable to verify this family account.' });
-    }
+    if (String(req.client?.id || '') !== String(owner._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
 
     const members = (owner.familyLinks || [])
-      .map((link) => familyMemberSummary(link.clientId, link.relationship))
+      .map((link) => familyMemberSummary(link.clientId, link.relationship, link))
       .filter(Boolean);
-    return res.json({ owner: familyMemberSummary(owner, 'self'), members });
+    return res.json({
+      owner: familyMemberSummary(owner, 'self', { status: 'active' }),
+      members: members.filter((m) => m.linkDirection !== 'incoming'),
+      incomingInvitations: members.filter((m) => m.linkDirection === 'incoming' && m.linkStatus === 'pending'),
+    });
   } catch (err) {
     console.error('getFamilyMembers failed:', err?.message || err);
     return res.status(500).json({ error: 'Could not load family members.' });
@@ -636,64 +797,173 @@ exports.addFamilyMember = async (req, res) => {
   try {
     const owner = await Client.findById(req.params.id).select('+pinHash').exec();
     if (!owner) return res.status(404).json({ error: 'Client not found' });
-    if (!familyAuthMatches(owner, req.body || {}, {})) {
-      return res.status(403).json({ error: 'Unable to verify this family account.' });
-    }
+    if (String(req.client?.id || '') !== String(owner._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
 
     const firstName = String(req.body?.firstName || '').trim();
     const lastName = String(req.body?.lastName || '').trim();
     const memberPhone = normalizePhone(req.body?.memberPhone || req.body?.familyPhone || '');
     const relationship = String(req.body?.relationship || 'family').trim().slice(0, 40) || 'family';
-    if (!firstName || !lastName || !/^\d{10}$/.test(memberPhone)) {
-      return res.status(400).json({ error: 'Family member name and a valid 10-digit phone are required.' });
-    }
-    if (memberPhone === normalizePhone(owner.phone)) {
-      return res.status(400).json({ error: 'That phone belongs to the signed-in client.' });
-    }
+    const noPhone = req.body?.noPhone === true || String(req.body?.noPhone || '').toLowerCase() === 'true';
+    const dob = parseNullableDate(req.body?.dob);
+    const guardianAttestation = req.body?.guardianAttestation === true || String(req.body?.guardianAttestation || '').toLowerCase() === 'true';
+    const allowedMinorRelationships = ['child', 'stepchild', 'foster_child', 'legal_ward', 'grandchild', 'minor_sibling'];
+    if (!firstName || !lastName) return res.status(400).json({ error: 'Family member first and last name are required.' });
 
-    let member = await Client.findOne({ phone: memberPhone }).select('+pinHash').exec();
+    let member = null;
     let created = false;
-    if (!member) {
-      const defaultPin = last4(memberPhone);
-      member = await Client.create({
-        firstName,
-        lastName,
-        phone: memberPhone,
-        pinHash: await bcrypt.hash(defaultPin, 10),
-        pinSetAt: new Date(),
-        pinIsDefault: true,
-        requiresNamePinUpgrade: true,
-        managedByClientId: owner._id,
-        contactPreferences: { method: 'sms', optInPromotions: false, emailDisabled: false },
-      });
+    let pendingInvitation = false;
+
+    if (noPhone) {
+      if (!dob || !guardianAttestation || !allowedMinorRelationships.includes(relationship)) {
+        return res.status(400).json({ error: 'A date of birth, qualifying relationship, and guardian confirmation are required to add a minor without a phone.' });
+      }
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const md = today.getMonth() - dob.getMonth();
+      if (md < 0 || (md === 0 && today.getDate() < dob.getDate())) age -= 1;
+      if (age < 0 || age >= 18) return res.status(403).json({ error: 'Only a minor under your care may be added without a phone. Adults without a phone must be added by salon staff.' });
+
+      const duplicate = await Client.findOne({ guardianClientId: owner._id, firstName: { $regex: `^${firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, lastName: { $regex: `^${lastName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, dob, profileType: 'minor_dependent' }).exec();
+      if (duplicate) return res.status(409).json({ error: 'A matching dependent already exists in your family.' });
+      member = await Client.create({ firstName, lastName, phone: null, dob, profileType: 'minor_dependent', guardianClientId: owner._id, relationshipToGuardian: relationship, guardianAttestedAt: new Date(), createdByType: 'client', createdById: owner._id, phoneVerified: false, requiresNamePinUpgrade: false, managedByClientId: owner._id, contactPreferences: { method: 'phone', optInPromotions: false, emailDisabled: true }, welcomeOffer: { status: 'void', source: 'client_created_minor_no_phone', amount: 0 } });
       created = true;
+    } else {
+      if (!/^\d{10}$/.test(memberPhone)) return res.status(400).json({ error: 'A valid 10-digit phone number is required.' });
+      if (memberPhone === normalizePhone(owner.phone)) return res.status(400).json({ error: 'That phone belongs to the signed-in client.' });
+      member = await Client.findOne({ phone: memberPhone }).select('+pinHash').exec();
+      if (!member) {
+        const defaultPin = last4(memberPhone);
+        member = await Client.create({ firstName, lastName, phone: memberPhone, phoneVerified: false, pinHash: await bcrypt.hash(defaultPin, 10), pinSetAt: new Date(), pinIsDefault: true, requiresNamePinUpgrade: true, managedByClientId: owner._id, createdByType: 'client', createdById: owner._id, contactPreferences: { method: 'sms', optInPromotions: false, emailDisabled: false }, welcomeOffer: { status: 'void', source: 'family_created_unverified', amount: 0 } });
+        created = true;
+      } else {
+        pendingInvitation = true;
+      }
     }
 
-    const alreadyLinked = (owner.familyLinks || []).some((link) => String(link.clientId) === String(member._id));
-    if (!alreadyLinked) {
-      owner.familyLinks.push({ clientId: member._id, relationship });
-      await owner.save();
+    const existingOwnerLink = (owner.familyLinks || []).find((l) => String(l.clientId) === String(member._id));
+    if (existingOwnerLink) {
+      const existingStatus = String(existingOwnerLink.status || 'active');
+      if (existingStatus === 'blocked') return res.status(403).json({ error: 'This client has blocked family invitations from this account. Salon staff must review any future request.' });
+      if (existingStatus === 'active') return res.status(409).json({ error: 'This client is already in your family.' });
+      if (existingStatus === 'pending') {
+        // A prior invitation may have been persisted even if SMS delivery failed.
+        // Treat another Add attempt as an explicit resend instead of trapping the
+        // relationship in a permanent "already pending" state.
+        if (!member.phone) {
+          return res.status(409).json({ error: 'A family invitation is already pending, but this client has no phone number available for delivery. Salon staff must review it.' });
+        }
+        const invitationToken = makeFamilyInvitationToken();
+        const invitationTokenHash = hashFamilyInvitationToken(invitationToken);
+        const invitationExpiresAt = await familyInvitationExpiry();
+        let memberIncomingLink = (member.familyLinks || []).find((l) => String(l.clientId) === String(owner._id) && String(l.status) === 'pending' && String(l.direction) === 'incoming');
+        existingOwnerLink.invitationTokenHash = invitationTokenHash;
+        existingOwnerLink.invitationExpiresAt = invitationExpiresAt;
+        existingOwnerLink.invitationSentAt = new Date();
+        if (!memberIncomingLink) {
+          member.familyLinks.push({
+            clientId: owner._id, relationship: 'family', status: 'pending', direction: 'incoming',
+            invitedByClientId: owner._id, invitationTokenHash, invitationExpiresAt, invitationSentAt: new Date(),
+            permissions: { canBook: false, canViewUpcoming: false, canCancel: false, canEditProfile: false },
+          });
+          memberIncomingLink = member.familyLinks[member.familyLinks.length - 1];
+        } else {
+          memberIncomingLink.invitationTokenHash = invitationTokenHash;
+          memberIncomingLink.invitationExpiresAt = invitationExpiresAt;
+          memberIncomingLink.invitationSentAt = new Date();
+        }
+        await Promise.all([owner.save(), member.save()]);
+        const inviteUrl = await familyInvitationUrl(invitationToken);
+        logFamilyInvitationDebugUrl(inviteUrl, member);
+        const inviteText = `${owner.firstName || 'A Rakie Salon client'} invited you to join their Rakie Salon family for booking. Review the invitation here: ${inviteUrl}`;
+        const smsResult = await sendSMS('family_invite', { clientId: safeClient(member) }, { messageOverride: inviteText });
+        if (!smsResult) {
+          return res.status(503).json({
+            pendingInvitation: true,
+            invitationResent: false,
+            smsSent: false,
+            error: 'The family invitation is still pending, but the text message could not be sent. Please try again. You do not need to remove the invitation first.',
+          });
+        }
+        await recordFamilyInvitationAudit({ requester: owner, invitee: member, action: 'resent', actorType: 'client', actorClientId: owner._id, reason: 'Family invitation text resent.' });
+        return res.status(200).json({
+          created: false,
+          pendingInvitation: true,
+          invitationResent: true,
+          smsSent: true,
+          member: familyMemberSummary(member, existingOwnerLink.relationship || relationship, existingOwnerLink),
+          message: 'Family invitation text resent successfully.',
+        });
+      }
+      const cooldownHours = await familyInvitationDeclineCooldownHours();
+      const cooldownMs = cooldownHours * 60 * 60 * 1000;
+      const declinedAtMs = existingOwnerLink.respondedAt ? new Date(existingOwnerLink.respondedAt).getTime() : NaN;
+      if (existingStatus === 'declined' && !existingOwnerLink.unblockedAt && Number.isFinite(declinedAtMs) && cooldownMs > 0 && Date.now() - declinedAtMs < cooldownMs) {
+        const remainingMs = Math.max(0, cooldownMs - (Date.now() - declinedAtMs));
+        const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+        const remainingMinutes = Math.ceil(remainingMs / (60 * 1000));
+        const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+        const waitText = remainingMs < 60 * 1000
+          ? `${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`
+          : remainingMs < 60 * 60 * 1000
+            ? `${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}`
+            : `${remainingHours} hour${remainingHours === 1 ? '' : 's'}`;
+        return res.status(429).json({ error: `This invitation was declined. Please wait about ${waitText} or ask salon staff to allow another invitation now.`, declineCooldownHours: cooldownHours, remainingMs, remainingSeconds, remainingMinutes, remainingHours });
+      }
+      owner.familyLinks = owner.familyLinks.filter((l) => String(l.clientId) !== String(member._id));
     }
 
-    const reciprocal = (member.familyLinks || []).some((link) => String(link.clientId) === String(owner._id));
-    if (!reciprocal) {
-      member.familyLinks.push({ clientId: owner._id, relationship: 'family' });
-      if (!member.managedByClientId) member.managedByClientId = owner._id;
-      await member.save();
-    }
+    const status = pendingInvitation ? 'pending' : 'active';
+    const invitationToken = pendingInvitation ? makeFamilyInvitationToken() : '';
+    const invitationTokenHash = pendingInvitation ? hashFamilyInvitationToken(invitationToken) : '';
+    const invitationExpiresAt = pendingInvitation ? await familyInvitationExpiry() : null;
+    owner.familyLinks.push({ clientId: member._id, relationship, status, direction: pendingInvitation ? 'outgoing' : 'reciprocal', invitedByClientId: owner._id, invitationFirstName: pendingInvitation ? firstName : '', invitationLastName: pendingInvitation ? lastName : '', invitationTokenHash, invitationExpiresAt, invitationSentAt: pendingInvitation ? new Date() : null, permissions: { canBook: !pendingInvitation, canViewUpcoming: !pendingInvitation, canCancel: false, canEditProfile: canManageDependent(owner._id, member) } });
+    await owner.save();
 
-    if (created) {
-      setImmediate(() => {
-        sendSMS('pin_changed', { clientId: safeClient(member) }, {
-          messageOverride: `You were added to a Rakie Salon family account. Your temporary PIN is the last 4 digits of your phone. You will be asked to change it when you sign in.`,
-        }).catch(err => console.error('[addFamilyMember] sendSMS error:', err?.message || err));
+    const reciprocal = (member.familyLinks || []).find((l) => String(l.clientId) === String(owner._id));
+    if (reciprocal) {
+      reciprocal.relationship = 'family'; reciprocal.status = status; reciprocal.direction = pendingInvitation ? 'incoming' : 'reciprocal'; reciprocal.invitedByClientId = owner._id;
+      reciprocal.invitationTokenHash = invitationTokenHash; reciprocal.invitationExpiresAt = invitationExpiresAt; reciprocal.invitationSentAt = pendingInvitation ? new Date() : null;
+      // This is a brand-new invitation lifecycle. Do not carry an old decline/report override
+      // into the new request or the admin profile may incorrectly hide its cooldown/block state.
+      reciprocal.respondedAt = null;
+      reciprocal.reportedAt = null;
+      reciprocal.unblockedAt = null;
+      reciprocal.unblockedByAdminId = null;
+      reciprocal.unblockReason = '';
+    } else {
+      member.familyLinks.push({ clientId: owner._id, relationship: 'family', status, direction: pendingInvitation ? 'incoming' : 'reciprocal', invitedByClientId: owner._id, invitationTokenHash, invitationExpiresAt, invitationSentAt: pendingInvitation ? new Date() : null, permissions: { canBook: false, canViewUpcoming: false, canCancel: false, canEditProfile: false } });
+    }
+    await member.save();
+
+    if (created && member.phone) {
+      setImmediate(() => sendSMS('pin_changed', { clientId: safeClient(member) }, { messageOverride: 'A family member created your Rakie Salon profile. Your temporary PIN is the last 4 digits of your phone. You will be asked to change it when you sign in. Contact the salon if this was not authorized.' }).catch(err => console.error('[addFamilyMember] sendSMS error:', err?.message || err)));
+    } else if (pendingInvitation && member.phone) {
+      // Invitation delivery is awaited so the API never claims "sent" when the
+      // database link was saved but Twilio/template delivery did not occur.
+      const inviteUrl = await familyInvitationUrl(invitationToken);
+      logFamilyInvitationDebugUrl(inviteUrl, member);
+      const inviteText = `${owner.firstName || 'A Rakie Salon client'} invited you to join their Rakie Salon family for booking. Review the invitation here: ${inviteUrl}`;
+      const smsResult = await sendSMS('family_invite', { clientId: safeClient(member) }, { messageOverride: inviteText });
+      if (!smsResult) {
+        return res.status(202).json({
+          created,
+          pendingInvitation: true,
+          smsSent: false,
+          member: familyMemberSummary(member, relationship, { status, direction: 'outgoing' }),
+          message: 'The family invitation is pending, but the text message could not be sent. Try adding this member again to resend the invitation.',
+        });
+      }
+      await recordFamilyInvitationAudit({ requester: owner, invitee: member, action: 'invited', actorType: 'client', actorClientId: owner._id, reason: 'Family invitation sent.' });
+      return res.status(202).json({
+        created,
+        pendingInvitation: true,
+        smsSent: true,
+        member: familyMemberSummary(member, relationship, { status, direction: 'outgoing' }),
+        message: 'Invitation sent. The existing client must accept before booking is allowed.',
       });
     }
 
-    return res.status(created ? 201 : 200).json({
-      created,
-      member: familyMemberSummary(member, relationship),
-    });
+    return res.status(created ? 201 : 202).json({ created, pendingInvitation, member: familyMemberSummary(member, relationship, { status, direction: pendingInvitation ? 'outgoing' : 'reciprocal' }), message: pendingInvitation ? 'Invitation pending.' : 'Family member added.' });
   } catch (err) {
     console.error('addFamilyMember failed:', err?.message || err);
     if (err?.code === 11000) return res.status(409).json({ error: 'A client with that phone already exists.' });
@@ -701,130 +971,325 @@ exports.addFamilyMember = async (req, res) => {
   }
 };
 
+exports.requestFamilyInvitationAcceptOtp = async (req, res) => {
+  try {
+    const invitee = await Client.findById(req.params.id).exec();
+    if (!invitee) return res.status(404).json({ error: 'Client not found.' });
+    if (String(req.client?.id || '') !== String(invitee._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
 
-function isManagedDependent(ownerId, member, relationship = '') {
-  const rel = String(relationship || '').trim().toLowerCase();
-  const dependentRelationship = ['child', 'son', 'daughter', 'dependent', 'minor', 'ward'].includes(rel);
-  return dependentRelationship || String(member?.managedByClientId || '') === String(ownerId || '');
+    const otpRequired = await getRuntimeBoolean('family.invitation.acceptOtpRequired.enabled', false);
+    if (!otpRequired) return res.json({ required: false, message: 'OTP confirmation is currently disabled.' });
+
+    const link = (invitee.familyLinks || []).find((l) => String(l.clientId) === String(req.params.requesterId) && String(l.status) === 'pending' && String(l.direction) === 'incoming');
+    if (!link) return res.status(404).json({ error: 'Pending invitation not found.' });
+    const phone = normalizePhone(invitee.phone);
+    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'A valid phone number is required to send the confirmation code.' });
+    if (!canRequestOtp(phone, 'family_accept')) return res.status(429).json({ error: 'Too many codes requested. Please wait before trying again.' });
+
+    const result = await issueOtpAndSend({ phone, purpose: 'family_accept', client: safeClient(invitee) });
+    if (!result.ok) return res.status(502).json({ error: 'Could not send the confirmation code. Please try again or contact the salon.' });
+    return res.json({ required: true, sent: true, maskedPhone: maskPhone(phone), expiresInMinutes: OTP_TTL_MINUTES });
+  } catch (err) {
+    console.error('requestFamilyInvitationAcceptOtp failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not send the family invitation confirmation code.' });
+  }
+};
+
+exports.respondFamilyInvitation = async (req, res) => {
+  let inviteeForAudit = null;
+  let requesterForAudit = null;
+  try {
+    const invitee = await Client.findById(req.params.id).exec();
+    if (!invitee) return res.status(404).json({ error: 'Client not found.' });
+    if (String(req.client?.id || '') !== String(invitee._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
+    const action = String(req.body?.action || '').toLowerCase();
+    if (!['accept', 'decline', 'report'].includes(action)) return res.status(400).json({ error: 'Choose accept, decline, or report.' });
+
+    if (action === 'accept') {
+      const otpRequired = await getRuntimeBoolean('family.invitation.acceptOtpRequired.enabled', false);
+      if (otpRequired) {
+        const otp = String(req.body?.otp || '').trim();
+        if (!/^\d{6}$/.test(otp)) {
+          return res.status(428).json({ code: 'FAMILY_ACCEPT_OTP_REQUIRED', error: 'Enter the 6-digit code sent to your phone to accept this invitation.' });
+        }
+        const verified = await verifyOtpCode({ phone: normalizePhone(invitee.phone), purpose: 'family_accept', otp, consume: true });
+        if (!verified.ok) return otpFailureResponse(res, invitee.phone, verified.reason);
+      }
+    }
+
+    const session = await Client.startSession();
+    let finalStatus = '';
+    try {
+      await session.withTransaction(async () => {
+        const inviteeTx = await Client.findById(req.params.id).session(session);
+        const requesterTx = await Client.findById(req.params.requesterId).session(session);
+        if (!inviteeTx || !requesterTx) {
+          const err = new Error('Family invitation clients were not found.'); err.status = 404; throw err;
+        }
+        const link = (inviteeTx.familyLinks || []).find((l) => String(l.clientId) === String(requesterTx._id) && String(l.status) === 'pending' && String(l.direction) === 'incoming');
+        const reverse = (requesterTx.familyLinks || []).find((l) => String(l.clientId) === String(inviteeTx._id) && String(l.status) === 'pending' && String(l.direction) === 'outgoing');
+        if (!link || !reverse) {
+          const err = new Error('This invitation has already been responded to, canceled, or is no longer pending.'); err.status = 409; err.code = 'FAMILY_INVITATION_ALREADY_RESOLVED'; throw err;
+        }
+        const now = new Date();
+        if (action === 'accept') {
+          link.status = 'active'; link.direction = 'reciprocal'; link.respondedAt = now;
+          link.permissions = { canBook: false, canViewUpcoming: false, canCancel: false, canEditProfile: false };
+          reverse.status = 'active'; reverse.direction = 'reciprocal'; reverse.respondedAt = now;
+          reverse.permissions = { canBook: true, canViewUpcoming: true, canCancel: false, canEditProfile: false };
+        } else {
+          const nextStatus = action === 'report' ? 'blocked' : 'declined';
+          for (const item of [link, reverse]) {
+            item.status = nextStatus; item.respondedAt = now;
+            item.unblockedAt = null; item.unblockedByAdminId = null; item.unblockReason = '';
+            item.reportedAt = action === 'report' ? now : null;
+          }
+        }
+        clearFamilyInvitationToken(link); clearFamilyInvitationToken(reverse);
+        await inviteeTx.save({ session });
+        await requesterTx.save({ session });
+        finalStatus = String(link.status);
+        inviteeForAudit = inviteeTx;
+        requesterForAudit = requesterTx;
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    if (action === 'report') await recordFamilyInvitationReport({ requester: requesterForAudit, invitee: inviteeForAudit, source: 'client' });
+    else await recordFamilyInvitationAudit({ requester: requesterForAudit, invitee: inviteeForAudit, action: action === 'accept' ? 'accepted' : 'declined', actorType: 'client', actorClientId: inviteeForAudit?._id, reason: action === 'accept' ? 'Recipient accepted family invitation.' : 'Recipient declined family invitation.' });
+    return res.json({ status: finalStatus, message: action === 'accept' ? 'Family invitation accepted.' : action === 'report' ? 'Invitation reported and blocked.' : `Family invitation declined. No access was granted. A new invitation can be sent after ${formatCooldownDuration(await familyInvitationDeclineCooldownHours())} unless salon staff allows it sooner.` });
+  } catch (err) {
+    console.error('respondFamilyInvitation failed:', err?.message || err);
+    return res.status(err?.status || 500).json({ error: err?.status ? err.message : 'Could not respond to the family invitation.', code: err?.code });
+  }
+};
+
+
+async function findPublicFamilyInvitation(rawToken) {
+  const token = String(rawToken || '').trim();
+  if (!token || token.length < 32 || token.length > 200) return null;
+  const tokenHash = hashFamilyInvitationToken(token);
+  const invitee = await Client.findOne({
+    familyLinks: {
+      $elemMatch: {
+        invitationTokenHash: tokenHash,
+        status: 'pending',
+        direction: 'incoming',
+        invitationExpiresAt: { $gt: new Date() },
+      },
+    },
+  }).exec();
+  if (!invitee) return null;
+  const link = (invitee.familyLinks || []).find((item) =>
+    item.invitationTokenHash === tokenHash &&
+    String(item.status) === 'pending' &&
+    String(item.direction) === 'incoming' &&
+    item.invitationExpiresAt && new Date(item.invitationExpiresAt).getTime() > Date.now()
+  );
+  if (!link) return null;
+  const requester = await Client.findById(link.clientId).select('firstName lastName familyLinks').exec();
+  if (!requester) return null;
+  const reverse = (requester.familyLinks || []).find((item) =>
+    String(item.clientId) === String(invitee._id) &&
+    String(item.status) === 'pending' &&
+    String(item.direction) === 'outgoing'
+  );
+  return { tokenHash, invitee, link, requester, reverse };
 }
+
+exports.getPublicFamilyInvitation = async (req, res) => {
+  try {
+    const found = await findPublicFamilyInvitation(req.params.token);
+    if (!found) return res.status(410).json({ error: 'This family invitation link is invalid, expired, canceled, or already used.' });
+    const otpRequired = await getRuntimeBoolean('family.invitation.acceptOtpRequired.enabled', false);
+    const declineCooldownHours = await familyInvitationDeclineCooldownHours();
+    return res.json({
+      status: 'pending',
+      inviterFirstName: String(found.requester.firstName || 'A Rakie Salon client').trim(),
+      expiresAt: found.link.invitationExpiresAt || null,
+      otpRequired,
+      declineCooldownHours,
+      permissions: { canBook: true, canViewUpcoming: true, canCancel: false, canEditProfile: false },
+    });
+  } catch (err) {
+    console.error('getPublicFamilyInvitation failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not load this family invitation.' });
+  }
+};
+
+exports.requestPublicFamilyInvitationAcceptOtp = async (req, res) => {
+  try {
+    const found = await findPublicFamilyInvitation(req.params.token);
+    if (!found) return res.status(410).json({ error: 'This family invitation link is invalid, expired, canceled, or already used.' });
+    const otpRequired = await getRuntimeBoolean('family.invitation.acceptOtpRequired.enabled', false);
+    if (!otpRequired) return res.json({ required: false, message: 'OTP confirmation is currently disabled.' });
+    const phone = normalizePhone(found.invitee.phone);
+    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'A valid phone number is required to send the confirmation code.' });
+    if (!canRequestOtp(phone, 'family_accept')) return res.status(429).json({ error: 'Too many codes requested. Please wait before trying again.' });
+    const result = await issueOtpAndSend({ phone, purpose: 'family_accept', client: safeClient(found.invitee) });
+    if (!result.ok) return res.status(502).json({ error: 'Could not send the confirmation code. Please try again or contact the salon.' });
+    return res.json({ required: true, sent: true, maskedPhone: maskPhone(phone), expiresInMinutes: OTP_TTL_MINUTES });
+  } catch (err) {
+    console.error('requestPublicFamilyInvitationAcceptOtp failed:', err?.message || err);
+    return res.status(500).json({ error: 'Could not send the family invitation confirmation code.' });
+  }
+};
+
+exports.respondPublicFamilyInvitation = async (req, res) => {
+  let requesterForAudit = null;
+  let inviteeForAudit = null;
+  try {
+    const token = String(req.params.token || '').trim();
+    const tokenHash = hashFamilyInvitationToken(token);
+    const initial = await findPublicFamilyInvitation(token);
+    if (!initial) return res.status(410).json({ error: 'This family invitation link is invalid, expired, canceled, or already used.' });
+    const action = String(req.body?.action || '').toLowerCase();
+    if (!['accept', 'decline', 'report'].includes(action)) return res.status(400).json({ error: 'Choose accept, decline, or report.' });
+
+    if (action === 'accept') {
+      const otpRequired = await getRuntimeBoolean('family.invitation.acceptOtpRequired.enabled', false);
+      if (otpRequired) {
+        const otp = String(req.body?.otp || '').trim();
+        if (!/^\d{6}$/.test(otp)) return res.status(428).json({ code: 'FAMILY_ACCEPT_OTP_REQUIRED', error: 'Enter the 6-digit code sent to your phone to accept this invitation.' });
+        const verified = await verifyOtpCode({ phone: normalizePhone(initial.invitee.phone), purpose: 'family_accept', otp, consume: true });
+        if (!verified.ok) return otpFailureResponse(res, initial.invitee.phone, verified.reason);
+      }
+    }
+
+    const session = await Client.startSession();
+    let finalStatus = '';
+    try {
+      await session.withTransaction(async () => {
+        const inviteeTx = await Client.findOne({ familyLinks: { $elemMatch: { invitationTokenHash: tokenHash, status: 'pending', direction: 'incoming', invitationExpiresAt: { $gt: new Date() } } } }).session(session);
+        if (!inviteeTx) {
+          const err = new Error('This invitation has already been responded to, canceled, expired, or is no longer pending.'); err.status = 409; err.code = 'FAMILY_INVITATION_ALREADY_RESOLVED'; throw err;
+        }
+        const link = (inviteeTx.familyLinks || []).find((item) => item.invitationTokenHash === tokenHash && String(item.status) === 'pending' && String(item.direction) === 'incoming' && item.invitationExpiresAt && new Date(item.invitationExpiresAt).getTime() > Date.now());
+        if (!link) { const err = new Error('This invitation is no longer pending.'); err.status = 409; throw err; }
+        const requesterTx = await Client.findById(link.clientId).session(session);
+        if (!requesterTx) { const err = new Error('The requesting client was not found.'); err.status = 404; throw err; }
+        const reverse = (requesterTx.familyLinks || []).find((item) => String(item.clientId) === String(inviteeTx._id) && String(item.status) === 'pending' && String(item.direction) === 'outgoing' && item.invitationTokenHash === tokenHash);
+        if (!reverse) { const err = new Error('This invitation is no longer pending.'); err.status = 409; err.code = 'FAMILY_INVITATION_ALREADY_RESOLVED'; throw err; }
+        const now = new Date();
+        if (action === 'accept') {
+          link.status = 'active'; link.direction = 'reciprocal'; link.respondedAt = now;
+          link.permissions = { canBook: false, canViewUpcoming: false, canCancel: false, canEditProfile: false };
+          reverse.status = 'active'; reverse.direction = 'reciprocal'; reverse.respondedAt = now;
+          reverse.permissions = { canBook: true, canViewUpcoming: true, canCancel: false, canEditProfile: false };
+        } else {
+          const nextStatus = action === 'report' ? 'blocked' : 'declined';
+          for (const item of [link, reverse]) {
+            item.status = nextStatus; item.respondedAt = now;
+            item.unblockedAt = null; item.unblockedByAdminId = null; item.unblockReason = '';
+            item.reportedAt = action === 'report' ? now : null;
+          }
+        }
+        clearFamilyInvitationToken(link); clearFamilyInvitationToken(reverse);
+        await inviteeTx.save({ session });
+        await requesterTx.save({ session });
+        finalStatus = String(link.status);
+        requesterForAudit = requesterTx;
+        inviteeForAudit = inviteeTx;
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    if (action === 'report') await recordFamilyInvitationReport({ requester: requesterForAudit, invitee: inviteeForAudit, source: 'public_link' });
+    else await recordFamilyInvitationAudit({ requester: requesterForAudit, invitee: inviteeForAudit, action: action === 'accept' ? 'accepted' : 'declined', actorType: 'public_link', actorClientId: inviteeForAudit?._id, reason: action === 'accept' ? 'Recipient accepted family invitation from secure link.' : 'Recipient declined family invitation from secure link.' });
+    return res.json({
+      status: finalStatus,
+      message: action === 'accept'
+        ? 'Family invitation accepted.'
+        : action === 'report'
+          ? 'Invitation reported and blocked.'
+          : `Family invitation declined. No access was granted. A new invitation can be sent after ${formatCooldownDuration(await familyInvitationDeclineCooldownHours())} unless salon staff allows it sooner.`,
+    });
+  } catch (err) {
+    console.error('respondPublicFamilyInvitation failed:', err?.message || err);
+    return res.status(err?.status || 500).json({ error: err?.status ? err.message : 'Could not respond to the family invitation.', code: err?.code });
+  }
+};
+
 
 exports.getFamilyOverview = async (req, res) => {
   try {
-    const owner = await Client.findById(req.params.id)
-      .select('firstName lastName phone familyLinks')
-      .populate({
-        path: 'familyLinks.clientId',
-        select: 'firstName lastName phone managedByClientId assignedStylistId preferredStylistId lastStylistId',
-      })
-      .lean();
+    const owner = await Client.findById(req.params.id).select('firstName lastName phone familyLinks').populate({ path: 'familyLinks.clientId', select: 'firstName lastName phone dob profileType guardianClientId managedByClientId assignedStylistId preferredStylistId lastStylistId' }).lean();
     if (!owner) return res.status(404).json({ error: 'Client not found' });
-    if (!familyAuthMatches(owner, {}, req.query || {})) {
-      return res.status(403).json({ error: 'Unable to verify this family account.' });
-    }
-
-    const people = [familyMemberSummary(owner, 'self'), ...(owner.familyLinks || [])
-      .map((link) => familyMemberSummary(link.clientId, link.relationship))
-      .filter(Boolean)];
-    const ids = people.map((person) => person?._id).filter(Boolean);
+    if (String(req.client?.id || '') !== String(owner._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
+    const outgoing = (owner.familyLinks || []).filter((l) => l.direction !== 'incoming').map((l) => familyMemberSummary(l.clientId, l.relationship, l)).filter(Boolean);
+    const incomingInvitations = (owner.familyLinks || []).filter((l) => l.direction === 'incoming' && l.status === 'pending').map((l) => familyMemberSummary(l.clientId, l.relationship, l)).filter(Boolean);
+    const people = [familyMemberSummary(owner, 'self', { status: 'active' }), ...outgoing];
+    const visiblePeople = people.filter((p) => p.relationship === 'self' || (p.linkStatus === 'active' && p.permissions?.canViewUpcoming !== false));
+    const ids = visiblePeople.map((p) => p._id).filter(Boolean);
     const Appointment = require('../../models/appointment');
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dateFloor = today.toISOString().slice(0, 10);
-    const appointments = await Appointment.find({
-      clientId: { $in: ids },
-      status: { $in: ['pending', 'booked'] },
-      date: { $gte: dateFloor },
-      $or: [{ archivedAt: null }, { archivedAt: { $exists: false } }],
-    }).sort({ date: 1, time: 1 }).lean();
-
-    const byClient = new Map();
-    for (const appt of appointments) {
-      const key = String(appt.clientId || '');
-      if (!byClient.has(key)) byClient.set(key, []);
-      byClient.get(key).push(appt);
-    }
-
+    const today = new Date(); today.setHours(0,0,0,0); const dateFloor = today.toISOString().slice(0,10);
+    const appointments = await Appointment.find({ clientId: { $in: ids }, status: { $in: ['pending','booked'] }, date: { $gte: dateFloor }, $or: [{ archivedAt: null }, { archivedAt: { $exists: false } }] }).sort({ date:1,time:1 }).lean();
+    const byClient = new Map(); for (const a of appointments) { const k=String(a.clientId||''); if(!byClient.has(k)) byClient.set(k,[]); byClient.get(k).push(a); }
     const members = people.map((person) => {
-      const upcoming = byClient.get(String(person._id)) || [];
+      const upcomingRaw = person.linkStatus === 'active' ? (byClient.get(String(person._id)) || []) : [];
+      const canEditProfile = person.relationship === 'self' || canManageDependent(owner._id, person);
+      const canManageAllAppointments = person.relationship === 'self' || canEditProfile || person.permissions?.canCancel === true;
+      const upcoming = upcomingRaw.map((appointment) => {
+        const createdByOwner = appointment.bookedByClientId && String(appointment.bookedByClientId) === String(owner._id);
+        const { bookedByClientId, ...safeAppointment } = appointment;
+        return { ...safeAppointment, canEditAppointment: canManageAllAppointments || createdByOwner };
+      });
       return {
         ...person,
-        canEditProfile: person.relationship === 'self' || isManagedDependent(owner._id, person, person.relationship),
+        canEditProfile,
+        canBook: person.relationship === 'self' || (person.linkStatus === 'active' && person.permissions?.canBook !== false),
         upcomingAppointments: upcoming,
         nextAppointment: upcoming[0] || null,
-        pendingCount: upcoming.filter((appt) => String(appt.status).toLowerCase() === 'pending').length,
+        activeAppointmentCount: upcoming.length,
+        atOnlineAppointmentLimit: upcoming.length >= 2,
+        pendingCount: upcoming.filter(a => String(a.status).toLowerCase()==='pending').length,
       };
     });
-
-    return res.json({
-      ownerClientId: owner._id,
-      members,
-      summary: {
-        upcomingCount: appointments.length,
-        pendingCount: appointments.filter((appt) => String(appt.status).toLowerCase() === 'pending').length,
-        withoutAppointmentCount: members.filter((member) => !member.nextAppointment).length,
-      },
-    });
-  } catch (err) {
-    console.error('getFamilyOverview failed:', err?.message || err);
-    return res.status(500).json({ error: 'Could not load the family overview.' });
-  }
+    return res.json({ ownerClientId: owner._id, members, incomingInvitations, summary: { upcomingCount: appointments.length, pendingCount: appointments.filter(a => String(a.status).toLowerCase()==='pending').length, withoutAppointmentCount: members.filter(m => m.linkStatus === 'active' && !m.nextAppointment).length } });
+  } catch (err) { console.error('getFamilyOverview failed:', err?.message || err); return res.status(500).json({ error: 'Could not load the family overview.' }); }
 };
 
 exports.updateFamilyMember = async (req, res) => {
   try {
     const owner = await Client.findById(req.params.id).select('firstName lastName phone familyLinks').exec();
     if (!owner) return res.status(404).json({ error: 'Client not found' });
-    if (!familyAuthMatches(owner, req.body || {}, {})) {
-      return res.status(403).json({ error: 'Unable to verify this family account.' });
-    }
-    const link = (owner.familyLinks || []).find((item) => String(item.clientId) === String(req.params.memberId));
-    if (!link) return res.status(404).json({ error: 'That client is not linked to this family account.' });
+    if (String(req.client?.id || '') !== String(owner._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
+    const link = (owner.familyLinks || []).find(i => String(i.clientId) === String(req.params.memberId) && activeFamilyLink(i));
+    if (!link) return res.status(404).json({ error: 'That active family link was not found.' });
     const member = await Client.findById(req.params.memberId).exec();
     if (!member) return res.status(404).json({ error: 'Family member not found.' });
-
-    const priorRelationship = link.relationship || 'family';
-    const relationship = String(req.body?.relationship || priorRelationship).trim().slice(0, 40) || 'family';
-    const canEditProfile = isManagedDependent(owner._id, member, priorRelationship);
+    const relationship = String(req.body?.relationship || link.relationship || 'family').trim().slice(0,40) || 'family';
+    const canEditProfile = canManageDependent(owner._id, member);
     link.relationship = relationship;
     if (canEditProfile) {
-      const firstName = String(req.body?.firstName ?? member.firstName ?? '').trim();
-      const lastName = String(req.body?.lastName ?? member.lastName ?? '').trim();
+      const firstName = String(req.body?.firstName ?? member.firstName ?? '').trim(); const lastName = String(req.body?.lastName ?? member.lastName ?? '').trim();
       if (!firstName || !lastName) return res.status(400).json({ error: 'First and last name are required.' });
-      member.firstName = firstName;
-      member.lastName = lastName;
+      member.firstName = firstName; member.lastName = lastName;
       const submittedPhone = normalizePhone(req.body?.memberPhone || req.body?.phone || member.phone || '');
-      if (!/^\d{10}$/.test(submittedPhone)) return res.status(400).json({ error: 'Enter a valid 10-digit phone number.' });
-      const duplicate = await Client.findOne({ phone: submittedPhone, _id: { $ne: member._id } }).lean();
-      if (duplicate) return res.status(409).json({ error: 'That phone number is already used by another client.' });
-      member.phone = submittedPhone;
+      if (member.profileType === 'minor_dependent' && !submittedPhone) member.phone = null;
+      else { if (!/^\d{10}$/.test(submittedPhone)) return res.status(400).json({ error: 'Enter a valid 10-digit phone number.' }); const duplicate = await Client.findOne({ phone: submittedPhone, _id: { $ne: member._id } }).lean(); if (duplicate) return res.status(409).json({ error: 'That phone number is already used by another client.' }); member.phone = submittedPhone; }
       await member.save();
     }
     await owner.save();
-    return res.json({ member: familyMemberSummary(member, relationship), canEditProfile });
-  } catch (err) {
-    console.error('updateFamilyMember failed:', err?.message || err);
-    return res.status(500).json({ error: 'Could not update the family member.' });
-  }
+    return res.json({ member: familyMemberSummary(member, relationship, link), canEditProfile });
+  } catch (err) { console.error('updateFamilyMember failed:', err?.message || err); return res.status(500).json({ error: 'Could not update the family member.' }); }
 };
 
 exports.unlinkFamilyMember = async (req, res) => {
   try {
     const owner = await Client.findById(req.params.id).select('phone familyLinks').exec();
     if (!owner) return res.status(404).json({ error: 'Client not found' });
-    if (!familyAuthMatches(owner, req.body || {}, {})) {
-      return res.status(403).json({ error: 'Unable to verify this family account.' });
-    }
-    const before = owner.familyLinks.length;
-    owner.familyLinks = owner.familyLinks.filter((item) => String(item.clientId) !== String(req.params.memberId));
-    if (owner.familyLinks.length === before) return res.status(404).json({ error: 'That client is not linked to this family account.' });
+    if (String(req.client?.id || '') !== String(owner._id)) return res.status(403).json({ error: 'You do not have permission to manage this family account.' });
+    const link = (owner.familyLinks || []).find(i => String(i.clientId) === String(req.params.memberId));
+    if (!link) return res.status(404).json({ error: 'That client is not linked to this family account.' });
+    const member = await Client.findById(req.params.memberId).exec();
+    if (member && canManageDependent(owner._id, member)) return res.status(409).json({ error: 'A minor dependent cannot be unlinked online. Salon staff must transfer or close guardianship so appointments and records remain protected.' });
+    owner.familyLinks = owner.familyLinks.filter(i => String(i.clientId) !== String(req.params.memberId));
     await owner.save();
-    await Client.updateOne(
-      { _id: req.params.memberId },
-      { $pull: { familyLinks: { clientId: owner._id } } }
-    );
-    return res.json({ message: 'Family member unlinked. Their client account and appointment history were not deleted.' });
-  } catch (err) {
-    console.error('unlinkFamilyMember failed:', err?.message || err);
-    return res.status(500).json({ error: 'Could not unlink the family member.' });
-  }
+    if (member) { member.familyLinks = (member.familyLinks || []).filter(i => String(i.clientId) !== String(owner._id)); if (String(member.managedByClientId || '') === String(owner._id)) member.managedByClientId = null; await member.save(); }
+    if (member && String(link.status) === 'pending') await recordFamilyInvitationAudit({ requester: owner, invitee: member, action: 'canceled', actorType: 'client', actorClientId: owner._id, reason: 'Requester canceled pending family invitation.' });
+    return res.json({ message: link.status === 'pending' ? 'Family invitation cancelled.' : 'Family member unlinked. Their client account and appointment history were not deleted.' });
+  } catch (err) { console.error('unlinkFamilyMember failed:', err?.message || err); return res.status(500).json({ error: 'Could not unlink the family member.' }); }
 };

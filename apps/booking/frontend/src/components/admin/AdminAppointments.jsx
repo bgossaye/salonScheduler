@@ -197,6 +197,19 @@ const filteredAppointments = appointments
     );
   });
 
+
+const openExistingAppointmentFromBooking = useCallback(async (appointmentId) => {
+  if (!appointmentId) return;
+  try {
+    const { data } = await API.get(`/admin/appointments/${appointmentId}`);
+    setSelectedAppt(data);
+    setModalOpen(true);
+  } catch (err) {
+    console.error('Failed to open active appointment', err);
+    toast.error(err?.response?.data?.error || 'Could not open the appointment.');
+  }
+}, []);
+
 const handleSave = async (form) => {
   try {
     if (form?.groupBooking) {
@@ -881,6 +894,7 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
         onClose={() => setModalOpen(false)}
         onSave={handleSave}
         initialData={selectedAppt}
+        onEditExistingAppointment={openExistingAppointmentFromBooking}
       />
     </div>
   );

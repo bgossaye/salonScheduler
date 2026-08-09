@@ -5,7 +5,50 @@
     <script src="%PUBLIC_URL%/env.js"></script>
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Rakie Salon</title>
+
+    <script>
+      // Last-resort recovery for a stale deployment where the browser has an
+      // old HTML shell but its referenced JS/CSS bundle no longer exists.
+      (function () {
+        var KEY = 'rakie-html-recovery';
+        async function recover() {
+          try {
+            var last = Number(sessionStorage.getItem(KEY) || 0);
+            var now = Date.now();
+            if (last && now - last < 60000) return;
+            sessionStorage.setItem(KEY, String(now));
+
+            if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+              var regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map(function (reg) { return reg.unregister(); }));
+            }
+            if ('caches' in window) {
+              var keys = await caches.keys();
+              await Promise.all(keys.filter(function (key) {
+                return key.indexOf('rakie-') === 0;
+              }).map(function (key) { return caches.delete(key); }));
+            }
+
+            var url = new URL(window.location.href);
+            url.searchParams.set('_rakie_refresh', String(now));
+            window.location.replace(url.toString());
+          } catch (_) {}
+        }
+
+        window.addEventListener('error', function (event) {
+          var target = event.target;
+          if (target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK')) {
+            recover();
+          }
+        }, true);
+      })();
+    </script>
 
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <meta name="theme-color" content="#111827" />

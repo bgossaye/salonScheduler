@@ -14,7 +14,15 @@ router.post('/', requireAnyPermission(['clientsEditProfile', 'appointmentsCreate
 router.get('/', requireAnyPermission(['clientsViewAll', 'clientsViewAssigned']), controller.getClients);
 router.post('/stylist-switch-request', requireAnyPermission(['clientsViewAssigned', 'clientsViewAll']), controller.requestStylistSwitch);
 router.get('/:id/details', requireAnyPermission(['clientsViewAll', 'clientsViewAssigned']), controller.getClientDetails);
+router.get('/:id/family/overview', requireAnyPermission(['clientsViewAll', 'clientsViewAssigned']), controller.getAdminFamilyOverview);
+router.post('/:id/family/link', requirePermission('clientsEditProfile'), controller.linkExistingFamilyMember);
+router.post('/:id/family/create-dependent', requirePermission('clientsEditProfile'), controller.createAdminFamilyDependent);
+router.post('/:id/family/:memberId/resend-invitation', requirePermission('clientsEditProfile'), controller.resendPendingFamilyInvitation);
+router.post('/:id/family/:memberId/cancel-invitation', requirePermission('clientsEditProfile'), controller.cancelPendingFamilyInvitation);
+router.delete('/:id/family/:memberId', requirePermission('clientsEditProfile'), controller.unlinkAdminFamilyMember);
 router.patch('/:id', requireAnyPermission(['clientsEditProfile', 'clientsAddNotes', 'clientsAssignStylist']), controller.updateClient);
+router.post('/:id/family/:memberId/unblock-invitations', requirePermission('clientsEditProfile'), controller.unblockFamilyInvitations);
+router.post('/:id/family/:memberId/clear-decline-cooldown', requirePermission('clientsEditProfile'), controller.clearFamilyInvitationDeclineCooldown);
 router.delete('/:id', requirePermission('clientsDelete'), controller.deleteClient);
 
 const storage = multer.diskStorage({

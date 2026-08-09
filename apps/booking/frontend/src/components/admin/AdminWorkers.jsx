@@ -336,11 +336,6 @@ export default function AdminWorkers() {
     }
   };
 
-  const createOrResetAccess = async (worker) => {
-    if (worker.staffAccount?.exists) return sendPasswordReset(worker);
-    return sendInvite(worker);
-  };
-
   const setAccessStatus = async (worker, status) => {
     try {
       const { data } = await API.patch(`/admin/workers/${worker._id}/access`, { status });

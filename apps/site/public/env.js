@@ -1,4 +1,4 @@
-<!-- apps/site/public/env.js -->
+// apps/site/public/env.js
   window.ENV = {
     API_BASE: "https://rakie-backend.onrender.com",
     PING_PATH: "/ping",

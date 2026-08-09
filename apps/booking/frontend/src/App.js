@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Header, Footer } from '@rakie/ui';
 import { wakeRender } from "./wakebooking";
 import ClientWelcome from './components/ClientWelcome';
 import ClientDashboard from './components/ClientDashboard';
 import ServiceSelector from './components/ServiceSelector';
 import ClientConfirmation from './pages/clientconfirmation';
-import CreateClientProfile from './components/CreateClientProfile';
+import FamilyInvitation from './pages/FamilyInvitation';
 import AdminLogin from './components/admin/AdminLogin';
 import StaffPasswordSetup from './components/admin/StaffPasswordSetup';
 import AdminDashboard from './components/admin/AdminDashboard';
@@ -46,6 +46,8 @@ function AdminDashboardRoute() {
 
 function App() {
 
+  const location = useLocation();
+  const isFamilyInvitationPage = location.pathname.startsWith('/family-invitation/') || location.pathname.startsWith('/booking/family-invitation/');
   const [client, setClient] = useState(null);
 
     // 📦 Load client from localStorage
@@ -78,6 +80,14 @@ function App() {
   //return <div className="p-6 text-center text-gray-600">Loading client info...</div>;
 	//}
 useEffect(() => { wakeRender({ tag: 'booking-root' }); }, []);
+if (isFamilyInvitationPage) {
+  return (
+    <Routes>
+      <Route path="/family-invitation/:token" element={<FamilyInvitation />} />
+      <Route path="/booking/family-invitation/:token" element={<FamilyInvitation />} />
+    </Routes>
+  );
+}
 return (
 <div className="min-h-screen bg-gray-100">
       <Header />      <ToastContainer position="top-center" />
@@ -87,7 +97,7 @@ return (
 	<Route path="/schedule" element={<ServiceSelector client={client} onSignOut={handleClientSignOut} />} />
 	<Route path="/dashboard" element={<ClientDashboard client={client} />} />
 	<Route path="/confirmation" element={<ClientConfirmation client={client} />} />
-	<Route path="/create-profile" element={<CreateClientProfile client={client} />} />
+	<Route path="/create-profile" element={<Navigate to="/" replace />} />
             {/* ✅ Admin Login */}
 	<Route path="/admin/login" element={<AdminLogin />} />
 	<Route path="/admin/set-password" element={<StaffPasswordSetup mode="invite" />} />
