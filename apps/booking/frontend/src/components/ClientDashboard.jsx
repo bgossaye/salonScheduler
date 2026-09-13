@@ -12,10 +12,11 @@ import {
 } from '../utils/specialDeals';
 
 /** ===== Helpers ===== */
-// Treat an appointment as "active" only if its start is still in the future
-function isFutureAppt(appt) {
-  return apptDate(appt) >= new Date();
-} 
+// Booked/pending appointments remain active until their status changes.
+// This helper is only used to flag an appointment whose scheduled start has passed.
+function hasAppointmentStartPassed(appt) {
+  return apptDate(appt) < new Date();
+}
 
 function readStoredClient() {
   try {
@@ -93,6 +94,7 @@ export default function ClientDashboard({ client }) {
   const [loading, setLoading] = useState(true);
   const [showFamilyHub, setShowFamilyHub] = useState(false);
   const [familySummary, setFamilySummary] = useState(null);
+  const [hasFamily, setHasFamily] = useState(false);
   const [bookingStatus, setBookingStatus] = useState({
     currentNotices: [],
     futureNotices: [],
@@ -147,10 +149,28 @@ export default function ClientDashboard({ client }) {
 
 
   useEffect(() => {
-    if (!effectiveClient?._id || !effectiveClient?.phone) return;
+    if (!effectiveClient?._id || !effectiveClient?.phone) {
+      setFamilySummary(null);
+      setHasFamily(false);
+      return;
+    }
+
     API.get(`/clients/${effectiveClient._id}/family/overview`)
-      .then(({ data }) => setFamilySummary(data?.summary || null))
-      .catch(() => setFamilySummary(null));
+      .then(({ data }) => {
+        setFamilySummary(data?.summary || null);
+
+        const members = Array.isArray(data?.members) ? data.members : [];
+        const incomingInvitations = Array.isArray(data?.incomingInvitations) ? data.incomingInvitations : [];
+        const hasLinkedFamilyMember = members.some(
+          (member) => member?.relationship !== 'self'
+        );
+
+        setHasFamily(hasLinkedFamilyMember || incomingInvitations.length > 0);
+      })
+      .catch(() => {
+        setFamilySummary(null);
+        setHasFamily(false);
+      });
   }, [effectiveClient?._id, effectiveClient?.phone]);
 
   const norm = (s) => (s || '').toLowerCase();
@@ -158,11 +178,7 @@ export default function ClientDashboard({ client }) {
   const activeAppointments = useMemo(
     () =>
       appointments
-        .filter(
-          (a) =>
-            ['booked', 'pending'].includes(norm(a?.status)) &&
-            isFutureAppt(a)
-        )
+        .filter((a) => ['booked', 'pending'].includes(norm(a?.status)))
         .sort((a, b) => apptDate(a) - apptDate(b)),
     [appointments]
   );
@@ -188,7 +204,7 @@ export default function ClientDashboard({ client }) {
     return name || 'Client';
   }, [effectiveClient]);
 
-  const handleExitToHome = () => {
+  const handleSiteHome = () => {
     window.location.href = 'https://rakiesalon.com';
   };
 
@@ -255,12 +271,15 @@ export default function ClientDashboard({ client }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <header className="flex justify-between items-right mb-4">
-        <img src={logo} alt="Rakie Salon Logo" className="h-12" />
-
-        <div className="text-right mb-6">
-          <h2 className="text-2xl font-semibold">Welcome back, {displayName}</h2>
+    <div className="rakie-dashboard min-h-screen bg-gray-100 p-4">
+      <header className="rakie-dashboard-header">
+        <div>
+          <div className="rakie-eyebrow">RAKIE SALON</div>
+          <h2>Welcome back, {displayName}</h2>
+          <p>Manage your appointments and family bookings.</p>
+        </div>
+        <div className="rakie-dashboard-actions">
+          <img src={logo} alt="Rakie Salon Logo" className="rakie-dashboard-logo" />
           <button
             onClick={() => {
               sessionStorage.clear();
@@ -268,15 +287,14 @@ export default function ClientDashboard({ client }) {
               localStorage.removeItem('clientToken');
               window.location.href = '/booking';
             }}
-            className="mt-1 text-sm text-blue-600 underline hover:text-blue-800"
+            className="rakie-text-link"
           >
-            Not you?
+            Logout
           </button>
+          <a href={`${window.location.origin}/`} className="rakie-text-link">
+            Main Site
+          </a>
         </div>
-
-        <button onClick={handleExitToHome} className="text-sm text-blue-500 hover:underline">
-          Exit
-        </button>
       </header>
 
       {noticeCount > 0 && (
@@ -333,11 +351,11 @@ export default function ClientDashboard({ client }) {
         </details>
       )}
 
-      {effectiveClient && (
+      {effectiveClient && hasFamily && (
         <button
           type="button"
           onClick={() => setShowFamilyHub(true)}
-          className="mb-5 flex w-full items-center justify-between rounded-xl border border-blue-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-400 hover:shadow-md"
+          className="rakie-family-card mb-5 flex w-full items-center justify-between rounded-xl border border-blue-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-400 hover:shadow-md"
         >
           <span className="flex items-center gap-4">
             <span className="relative">
@@ -377,11 +395,16 @@ export default function ClientDashboard({ client }) {
             <section className="mb-6">
               <h3 className="text-lg font-semibold mb-3">Active Appointments</h3>
               {activeAppointments.map((appt) => (
-                <div key={appt._id} className="bg-white shadow-md rounded p-4 mb-3">
+                <div key={appt._id} className="rakie-appointment-card bg-white shadow-md rounded p-4 mb-3">
                   <div className="flex flex-wrap gap-2 text-sm text-gray-700 mb-2">
                     <span className="px-2 py-0.5 rounded bg-green-50 border border-green-200">
                       {norm(appt.status).toUpperCase()}
                     </span>
+                    {hasAppointmentStartPassed(appt) && (
+                      <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-800 font-semibold">
+                        PAST DATE
+                      </span>
+                    )}
                     {shouldShowClientPromotion && doesAppointmentQualifyForSpecial(appt, promotionConfig) && (
                       <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-800 font-semibold">
                         {getSpecialAppointmentBadgeText(appt, promotionConfig).toUpperCase()}
@@ -412,7 +435,7 @@ export default function ClientDashboard({ client }) {
                     >
                       Cancel Appt
                     </button>
-                    <button onClick={handleExitToHome} className="bg-gray-500 text-white px-4 py-2 rounded">
+                    <button onClick={handleSiteHome} className="bg-gray-500 text-white px-4 py-2 rounded">
                       Exit
                     </button>
                   </div>
@@ -436,7 +459,7 @@ export default function ClientDashboard({ client }) {
                 No past appointment yet.
               </div>
             ) : (
-              <div className="bg-white shadow-md rounded p-4 mb-3 opacity-90">
+              <div className="rakie-appointment-card rakie-past-card bg-white shadow-md rounded p-4 mb-3 opacity-90">
                 <div className="flex flex-wrap gap-2 text-sm text-gray-700 mb-2">
                   <span className="px-2 py-0.5 rounded bg-slate-50 border border-slate-200">
                     {norm(pastAppointment.status).toUpperCase()}

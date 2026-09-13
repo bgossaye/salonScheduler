@@ -32,7 +32,25 @@ const storage = multer.diskStorage({
     cb(null, `client-${req.params.id}${ext}`);
   },
 });
-const upload = multer({ storage });
+
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB — a client photo has no business being bigger than this
+  },
+  fileFilter: (req, file, cb) => {
+    // Reject anything that isn't a standard raster image up front. This is
+    // specifically about not letting someone upload an .svg or .html file
+    // that later gets served back from /uploads — SVGs can contain script
+    // and this endpoint has no other content-type enforcement downstream.
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimetype)) {
+      return cb(new Error('Only JPEG, PNG, WEBP, or GIF images are allowed.'));
+    }
+    return cb(null, true);
+  },
+});
 
 router.post('/:id/upload-photo', requirePermission('clientsEditProfile'), upload.single('image'), controller.uploadClientPhoto);
 

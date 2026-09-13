@@ -28,6 +28,7 @@ import PrivateRoute from './components/admin/PrivateRoute';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { hasPermission } from './utils/permissions';
+import logo from './assets/TheRSlogo.png';
 
 
 function AdminLanding() {
@@ -48,6 +49,7 @@ function App() {
 
   const location = useLocation();
   const isFamilyInvitationPage = location.pathname.startsWith('/family-invitation/') || location.pathname.startsWith('/booking/family-invitation/');
+  const isClientExperience = ['/', '/schedule', '/dashboard', '/confirmation'].includes(location.pathname);
   const [client, setClient] = useState(null);
 
     // 📦 Load client from localStorage
@@ -80,6 +82,62 @@ function App() {
   //return <div className="p-6 text-center text-gray-600">Loading client info...</div>;
 	//}
 useEffect(() => { wakeRender({ tag: 'booking-root' }); }, []);
+
+useEffect(() => {
+  const mainSiteUrl = `${window.location.origin}/`;
+
+  const updateMainSiteLink = () => {
+    const anchors = Array.from(document.querySelectorAll('a'));
+    const brandLink = anchors.find((anchor) => {
+      const text = (anchor.textContent || '').trim().replace(/\s+/g, ' ');
+      return text === 'Rakie Salon' || text === 'Rakie Salon Site';
+    });
+
+    if (!brandLink) return false;
+
+    brandLink.setAttribute('href', mainSiteUrl);
+    brandLink.setAttribute('aria-label', 'Main Site');
+    brandLink.style.display = 'inline-flex';
+    brandLink.style.alignItems = 'center';
+    brandLink.style.justifyContent = 'flex-start';
+    brandLink.style.gap = '4px';
+
+    // Rebuild only the inside of the existing brand link so inherited
+    // margins/padding from the old brand text cannot separate logo and label.
+    brandLink.replaceChildren();
+
+    const brandLogo = document.createElement('img');
+    brandLogo.src = logo;
+    brandLogo.alt = '';
+    brandLogo.setAttribute('aria-hidden', 'true');
+    brandLogo.setAttribute('data-rakie-main-site-logo', 'true');
+    brandLogo.style.width = '22px';
+    brandLogo.style.height = '22px';
+    brandLogo.style.objectFit = 'contain';
+    brandLogo.style.display = 'block';
+    brandLogo.style.flex = '0 0 auto';
+    brandLogo.style.margin = '0';
+
+    const brandText = document.createElement('span');
+    brandText.textContent = 'Main Site';
+    brandText.style.margin = '0';
+    brandText.style.padding = '0';
+    brandText.style.display = 'inline-block';
+
+    brandLink.append(brandLogo, brandText);
+
+    return true;
+  };
+
+  if (updateMainSiteLink()) return undefined;
+
+  const observer = new MutationObserver(() => {
+    if (updateMainSiteLink()) observer.disconnect();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  return () => observer.disconnect();
+}, []);
 if (isFamilyInvitationPage) {
   return (
     <Routes>
@@ -89,7 +147,7 @@ if (isFamilyInvitationPage) {
   );
 }
 return (
-<div className="min-h-screen bg-gray-100">
+<div className={`min-h-screen ${isClientExperience ? 'rakie-client-shell' : 'bg-gray-100'}`}>
       <Header />      <ToastContainer position="top-center" />
       <Routes>
         {/* ✅ Client Flow */}
@@ -124,7 +182,7 @@ return (
                 </Route>
             </Route>
         </Routes>
-      <Footer />
+      {!isClientExperience && <Footer />}
     </div>
   );
 }

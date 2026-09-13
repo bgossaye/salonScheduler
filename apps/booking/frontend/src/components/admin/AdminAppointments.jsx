@@ -167,13 +167,70 @@ const handleUpdate = async (id, update) => {
     fetchAppointments();
   };
 
-const handleCancel = async (id) => {
+const getAppointmentClientLabel = (appt) => {
+  const client = appt?.client || appt?.clientId || {};
+  const name = [client?.firstName, client?.lastName].filter(Boolean).join(' ').trim();
+  return name || 'this client';
+};
+
+const handleConfirm = async (appt) => {
+  if (!appt?._id) return;
+
+  const clientLabel = getAppointmentClientLabel(appt);
+  if (!window.confirm(`Confirm the appointment for ${clientLabel}?`)) return;
+
   try {
-    await API.patch(`/admin/appointments/${id}`, { status: 'canceled' });
+    await API.patch(`/admin/appointments/${appt._id}`, { status: 'booked' });
+    toast.success('Appointment confirmed');
+    fetchAppointments();
+  } catch (err) {
+    toast.error('Failed to confirm appointment');
+  }
+};
+
+const handleCancel = async (appt) => {
+  if (!appt?._id) return;
+
+  const clientLabel = getAppointmentClientLabel(appt);
+  if (!window.confirm(`Cancel the appointment for ${clientLabel}?`)) return;
+
+  try {
+    await API.patch(`/admin/appointments/${appt._id}`, { status: 'canceled' });
     toast.success('Appointment marked as canceled');
     fetchAppointments();
   } catch (err) {
     toast.error('Failed to cancel appointment');
+  }
+};
+
+const handleNoShow = async (appt) => {
+  if (!appt?._id) return;
+
+  const clientLabel = getAppointmentClientLabel(appt);
+  if (!window.confirm(`Mark the appointment for ${clientLabel} as no-show?`)) return;
+
+  try {
+    await API.patch(`/admin/appointments/${appt._id}`, { status: 'noshow' });
+    toast.success('Appointment marked as no-show');
+    fetchAppointments();
+  } catch (err) {
+    toast.error('Failed to mark appointment as no-show');
+  }
+};
+
+const handleRestoreStatus = async (appt, status) => {
+  if (!appt?._id || !['pending', 'booked'].includes(status)) return;
+
+  const clientLabel = getAppointmentClientLabel(appt);
+  const label = status === 'booked' ? 'booked' : 'pending';
+  if (!window.confirm(`Change the appointment for ${clientLabel} back to ${label}?`)) return;
+
+  try {
+    await API.patch(`/admin/appointments/${appt._id}`, { status });
+    toast.success(`Appointment marked as ${label}`);
+    fetchAppointments();
+  } catch (err) {
+    toast.error(`Failed to mark appointment as ${label}`);
   }
 };
 
@@ -456,7 +513,8 @@ const end   = new Date(start.getTime() + (appt.duration || 60) * 60000);
 const now   = new Date();
 
 const isPending    = appt.status === 'pending';
-const isPastBooked = appt.status === 'booked' && now > end;       // past end → still booked
+const isBooked     = appt.status === 'booked';
+const isPastBooked = isBooked && now > end;       // past end → still booked
 const isTodayBooked= appt.status === 'booked' && now.toDateString() === start.toDateString();
 const serviceName = getAppointmentServiceName(appt);
 const workerName = getWorkerName(appt);
@@ -700,137 +758,66 @@ await API.patch(`/admin/clients/${selectedClient._id}`, clientPatch);
               </td>
               <td className="p-2 border">{renderAddOns(appt.addOns)}</td>
               <td className="border p-0">
-                {isPending ? (
-                  <div className="flex min-w-[176px] items-center justify-center gap-1">
+                <div className="flex min-w-[150px] items-center justify-center gap-2 px-2 py-1.5">
+                  {isPending && (
                     <button
                       type="button"
                       title="Confirm appointment"
                       aria-label="Confirm pending appointment"
-                      onClick={() => handleUpdate(appt._id, { status: 'booked' })}
-                      className="h-11 w-[52px] border-2 border-green-700 bg-green-600 p-0 text-[10px] font-extrabold tracking-wide text-white shadow-sm transition active:scale-95 hover:bg-green-700 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)]"
+                      onClick={() => handleConfirm(appt)}
+                      className="inline-flex h-9 min-w-[92px] items-center justify-center rounded-lg border border-emerald-700 bg-emerald-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-px hover:bg-emerald-700 hover:shadow focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 active:translate-y-0 active:scale-[0.98]"
                     >
-                      CNF
+                      Confirm
                     </button>
+                  )}
 
+                  {isBooked && (
                     <button
                       type="button"
-                      title="Cancel appointment"
-                      aria-label="Cancel pending appointment"
-                      onClick={() => handleCancel(appt._id)}
-                      className="h-11 w-[52px] border-2 border-yellow-600 bg-yellow-400 p-0 text-[10px] font-extrabold tracking-wide text-gray-900 shadow-sm transition active:scale-95 hover:bg-yellow-500 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)]"
+                      title="Complete appointment"
+                      aria-label="Complete booked appointment"
+                      onClick={() => handleComplete(appt)}
+                      className="inline-flex h-9 min-w-[92px] items-center justify-center rounded-lg border border-blue-700 bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-px hover:bg-blue-700 hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 active:translate-y-0 active:scale-[0.98]"
                     >
-                      CAN
+                      Complete
                     </button>
+                  )}
 
-                    <button
-                      type="button"
-                      title="Edit appointment"
-                      aria-label="Edit pending appointment"
-                      onClick={() => {
+                  <select
+                    className="h-9 w-9 cursor-pointer appearance-none rounded-lg border border-slate-300 bg-white p-0 text-center text-xs font-bold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    value=""
+                    aria-label="More appointment actions"
+                    title="More actions"
+                    onChange={(e) => {
+                      const action = e.target.value;
+                      if (action === 'edit') {
                         setSelectedAppt(appt);
                         setModalOpen(true);
-                      }}
-                      className="h-11 w-[52px] border-2 border-slate-600 bg-slate-500 p-0 text-[10px] font-extrabold tracking-wide text-white shadow-sm transition active:scale-95 hover:bg-slate-600 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)]"
-                    >
-                      EDT
-                    </button>
-
-                    <select
-                      className="h-7 w-7 cursor-pointer appearance-none rounded-sm border border-blue-800 bg-blue-600 p-0 text-center text-[11px] font-black leading-none text-white shadow-sm hover:bg-blue-700"
-                      value=""
-                      aria-label="More pending appointment actions"
-                      title="More actions"
-                      onChange={(e) => {
-                        const action = e.target.value;
-                        if (action === 'completed') handleComplete(appt);
-                        else if (action === 'noshow') handleUpdate(appt._id, { status: 'noshow' });
-                        else if (action === 'delete') {
-                          if (window.confirm('Are you sure you want to delete this appointment?')) {
-                            handleDelete(appt._id);
-                          }
+                      } else if (action === 'cancel') {
+                        handleCancel(appt);
+                      } else if (action === 'noshow') {
+                        handleNoShow(appt);
+                      } else if (action === 'pending') {
+                        handleRestoreStatus(appt, 'pending');
+                      } else if (action === 'booked') {
+                        handleRestoreStatus(appt, 'booked');
+                      } else if (action === 'delete') {
+                        if (window.confirm('Are you sure you want to delete this appointment?')) {
+                          handleDelete(appt._id);
                         }
-                      }}
-                    >
-                      <option value="">▼</option>
-                      <option value="completed">✔ Mark completed</option>
-                      <option value="noshow">🚫 Mark no-show</option>
-                      <option value="delete">🗑 Delete appointment</option>
-                    </select>
-                  </div>
-                ) : (
-                  <div className="flex min-w-[176px] items-center justify-center gap-1">
-                    <button
-                      type="button"
-                      title="Mark completed"
-                      aria-label="Mark appointment completed"
-                      disabled={appt.status === 'completed'}
-                      onClick={() => handleComplete(appt)}
-                      className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
-                        appt.status === 'completed'
-                          ? 'border-green-800 bg-green-700 text-white'
-                          : 'border-green-600 bg-green-500 text-white hover:bg-green-600'
-                      }`}
-                    >
-                      CMP
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Mark canceled"
-                      aria-label="Mark appointment canceled"
-                      disabled={appt.status === 'canceled'}
-                      onClick={() => handleCancel(appt._id)}
-                      className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
-                        appt.status === 'canceled'
-                          ? 'border-yellow-700 bg-yellow-500 text-gray-900'
-                          : 'border-yellow-500 bg-yellow-300 text-gray-900 hover:bg-yellow-400'
-                      }`}
-                    >
-                      CAN
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Mark no-show"
-                      aria-label="Mark appointment no-show"
-                      disabled={appt.status === 'noshow'}
-                      onClick={() => handleUpdate(appt._id, { status: 'noshow' })}
-                      className={`h-11 w-[52px] border-2 p-0 text-xs font-extrabold tracking-wide shadow-sm transition active:scale-95 disabled:cursor-default disabled:opacity-60 [clip-path:polygon(12%_0,88%_0,100%_50%,88%_100%,12%_100%,0_50%)] ${
-                        appt.status === 'noshow'
-                          ? 'border-red-900 bg-red-700 text-white'
-                          : 'border-red-700 bg-red-600 text-white hover:bg-red-700'
-                      }`}
-                    >
-                      NSH
-                    </button>
-
-                    <select
-                      className="h-7 w-7 cursor-pointer appearance-none rounded-sm border border-blue-800 bg-blue-600 p-0 text-center text-[11px] font-black leading-none text-white shadow-sm hover:bg-blue-700"
-                      value=""
-                      aria-label="More appointment actions"
-                      title="More actions"
-                      onChange={(e) => {
-                        const action = e.target.value;
-                        if (action === 'booked') handleUpdate(appt._id, { status: 'booked' });
-                        else if (action === 'pending') handleUpdate(appt._id, { status: 'pending' });
-                        else if (action === 'edit') {
-                          setSelectedAppt(appt);
-                          setModalOpen(true);
-                        } else if (action === 'delete') {
-                          if (window.confirm('Are you sure you want to delete this appointment?')) {
-                            handleDelete(appt._id);
-                          }
-                        }
-                      }}
-                    >
-                      <option value="">▼</option>
-                      <option value="booked">📅 Mark booked</option>
-                      <option value="pending">⏳ Mark pending</option>
-                      <option value="edit">✏️ Edit appointment</option>
-                      <option value="delete">🗑 Delete appointment</option>
-                    </select>
-                  </div>
-                )}
+                      }
+                    }}
+                  >
+                    <option value="">▼</option>
+                    <option value="edit">✏️ Edit appointment</option>
+                    {(isPending || isBooked) && <option value="cancel">✖ Cancel appointment</option>}
+                    {(isPending || isBooked) && <option value="noshow">🚫 Mark no-show</option>}
+                    {isBooked && <option value="pending">⏳ Mark pending</option>}
+                    {!isPending && !isBooked && <option value="booked">📅 Restore as booked</option>}
+                    {!isPending && !isBooked && <option value="pending">⏳ Restore as pending</option>}
+                    <option value="delete">🗑 Delete appointment</option>
+                  </select>
+                </div>
               </td>
             </tr>
 ); 

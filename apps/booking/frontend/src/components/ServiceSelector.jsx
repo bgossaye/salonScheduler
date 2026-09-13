@@ -1,5 +1,5 @@
 // Finalized ServiceSelector.jsx with frozen top banner and preserved layout
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -17,75 +17,33 @@ import {
   getSpecialDealForService,
   usePromotionConfig,
 } from '../utils/specialDeals';
+// Pure helpers used throughout this component now live in
+// utils/serviceSelectorHelpers.js — extracted so they're independently
+// unit-testable and reusable, without changing any behavior here.
+// See that file for the rationale and for where to continue this pattern
+// if you decompose the stateful sections below (family booking, coupons,
+// handleSubmit) into their own hooks/components.
+import {
+  bookingDebug,
+  summarizeClientAppointmentResponse,
+  clearOnlineBookingCount,
+  idOf,
+  workerDisplayName,
+  timeToMinutes,
+  addMinutesToTime,
+  basketItemDuration,
+  relationshipStylistIdFor,
+  clientStartingPrice,
+  clientPriceMessage,
+} from '../utils/serviceSelectorHelpers';
 
 const RAKIE_PHONE = '5854146041';
-const ONLINE_BOOKING_COUNT_KEY = 'rakieOnlineBookingServiceCount';
-const ONLINE_BOOKING_COUNT_TS_KEY = 'rakieOnlineBookingServiceCountAt';
-function clearOnlineBookingCount() {
-  try {
-    sessionStorage.removeItem(ONLINE_BOOKING_COUNT_KEY);
-    sessionStorage.removeItem(ONLINE_BOOKING_COUNT_TS_KEY);
-  } catch { console.log('booking count clear failed'); }
-}
-
-function idOf(value) {
-  return String(value?._id || value || '');
-}
-
-function workerDisplayName(worker) {
-  return worker?.displayName || [worker?.firstName, worker?.lastName].filter(Boolean).join(' ') || 'Stylist';
-}
-
-function timeToMinutes(timeStr) {
-  const [hStr, mStr] = String(timeStr || '').split(':');
-  return (parseInt(hStr, 10) || 0) * 60 + (parseInt(mStr, 10) || 0);
-}
-
-function addMinutesToTime(timeStr, minutesToAdd) {
-  const [hStr, mStr] = String(timeStr || '').split(':');
-  const start = (parseInt(hStr, 10) || 0) * 60 + (parseInt(mStr, 10) || 0);
-  const total = start + (Number(minutesToAdd) || 0);
-  const h = Math.floor(total / 60) % 24;
-  const m = total % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-function basketItemDuration(item) {
-  if (!item) return 0;
-  const base = Number(item.service?.duration || 0);
-  const extra = (item.addOns || []).reduce((sum, addOn) => sum + Number(addOn?.duration || 0), 0);
-  return base + extra;
-}
-
-function relationshipStylistIdFor(client) {
-  return (
-    idOf(client?.assignedStylistId) ||
-    idOf(client?.preferredStylistId) ||
-    idOf(client?.lastStylistId) ||
-    ''
-  );
-}
-
-function clientStartingPrice(service) {
-  const value = Number(service?.pricingSummary?.minPrice);
-  return Number.isFinite(value) ? `$${value.toFixed(value % 1 === 0 ? 0 : 2)}` : null;
-}
-
-function clientPriceMessage(service) {
-  const startingPrice = clientStartingPrice(service);
-  const consultationText = service?.requiresConsultation
-    ? ' Consultation is required before final pricing is confirmed.'
-    : ' Consultation may be required before final pricing is confirmed.';
-
-  return startingPrice
-    ? `Starting from ${startingPrice}.${consultationText} Final pricing may vary based on hair length, density, condition, product needs, service complexity, and time required.`
-    : `Starting price requires consultation.${consultationText} Final pricing may vary based on hair length, density, condition, product needs, service complexity, and time required.`;
-}
 
 export default function ServiceSelector({ client, onSignOut }) {
   const [categories, setCategories] = useState([]);
   const [services, setServices] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
+  const [categorySelectionMade, setCategorySelectionMade] = useState(false);
   const [selectedService, setSelectedService] = useState(null);
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [availableWorkers, setAvailableWorkers] = useState([]);
@@ -100,6 +58,7 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [selectedAddOns, setSelectedAddOns] = useState([]);
   const [serviceBasket, setServiceBasket] = useState([]);
   const [activeBasketItemId, setActiveBasketItemId] = useState(null);
+  const [editingBasketItemId, setEditingBasketItemId] = useState(null);
   const [editingAppointment, setEditingAppointment] = useState(null);
   const [showAddOnModal, setShowAddOnModal] = useState(false);
   const [storeHours, setStoreHours] = useState([]);
@@ -113,6 +72,20 @@ export default function ServiceSelector({ client, onSignOut }) {
   const [couponChecking, setCouponChecking] = useState(false);
   const [bookingSettings, setBookingSettings] = useState({ maxOnlineServicesPerVisit: 2, limitMessage: 'For more than 2 services, please call Rakie Salon so we can allocate enough time for your visit.' });
   const [bookingCompleteNotice, setBookingCompleteNotice] = useState(null);
+  const [guidedStep, setGuidedStep] = useState(1); // 1 who, 2 service, 3 date/time, 4 review (client create flow only)
+  const [pendingServiceToAdd, setPendingServiceToAdd] = useState(null);
+  const [appointmentCapacity, setAppointmentCapacity] = useState({
+    clientId: '',
+    loading: true,
+    activeAppointments: [],
+    count: 0,
+    max: 2,
+    canCreate: false,
+    error: '',
+  });
+  const [serviceAddedPrompt, setServiceAddedPrompt] = useState(null);
+  const [isSelectingAdditionalService, setIsSelectingAdditionalService] = useState(false);
+  const [familyFinalReviewRows, setFamilyFinalReviewRows] = useState(null);
   const [familyMembers, setFamilyMembers] = useState([]);
   const [selectedBookingClientIds, setSelectedBookingClientIds] = useState([]);
   const [activeFamilyBookingIndex, setActiveFamilyBookingIndex] = useState(0);
@@ -192,6 +165,19 @@ export default function ServiceSelector({ client, onSignOut }) {
    setEffectiveClient(null);
    if (typeof onSignOut === 'function') onSignOut();
    window.location.assign('/booking/');
+ };
+
+ const handleCancelBooking = () => {
+   if (mode === 'edit') {
+     sessionStorage.removeItem('editingAppointment');
+     window.location.href = '/booking/dashboard';
+   } else if (mode === 'rebook') {
+     sessionStorage.removeItem('rebookAppointment');
+     window.history.length > 1 ? window.history.back() : (window.location.href = '/booking');
+   } else {
+     clearOnlineBookingCount();
+     window.history.length > 1 ? window.history.back() : (window.location.href = '/booking');
+   }
  };
 
  // If parent later provides a client prop, sync it in
@@ -325,6 +311,13 @@ const editFamilyAppointment = (appointment) => {
 };
 
 const familyTogetherMode = selectedBookingClientIds.length > 1 && familyScheduleMode !== 'individual';
+
+const isBackToBackFollower =
+  mode === 'create' &&
+  selectedBookingClientIds.length > 1 &&
+  activeFamilyBookingIndex > 0 &&
+  familyScheduleMode === 'together-back-to-back' &&
+  !!firstFamilyBookingBlock;
 
 const toggleBookingPerson = (clientId) => {
   const id = String(clientId || '');
@@ -481,7 +474,7 @@ const lastStylistId = useMemo(() => idOf(activeBookingPerson?.lastStylistId), [a
 const baseline = useMemo(() => {
   if (!editingAppointment) return null;
   return {
-    clientId: effectiveClient?._id || editingAppointment.clientId,
+    clientId: idOf(editingAppointment.clientId || editingAppointment.client) || effectiveClient?._id || null,
     serviceId: editingAppointment.serviceId || editingAppointment.service?._id || null,
     serviceName: editingAppointment.service?.name || editingAppointment.service || null,
     workerId: idOf(editingAppointment.workerId || editingAppointment.worker || editingAppointment.priceSnapshot?.workerId),
@@ -500,7 +493,7 @@ const current = useMemo(() => {
   const addOnIds = selectedAddOns.length
     ? selectedAddOns.map(a => a._id)
     : (baseline?.addOnIds || []);
-  const clientId = (mode === 'create' ? activeBookingClientId : effectiveClient?._id) || baseline?.clientId || null;
+  const clientId = mode === 'create' ? (activeBookingClientId || effectiveClient?._id || null) : (baseline?.clientId || effectiveClient?._id || null);
   return { clientId, serviceId: svcId, workerId, date, time, addOnIds };
 }, [selectedService, selectedWorker, selectedDate, selectedTime, selectedAddOns, baseline, effectiveClient?._id, mode, activeBookingClientId]);
 
@@ -519,6 +512,65 @@ const changed = useMemo(() => {
   return !(sameService && sameWorker && sameDate && sameTime && sameAddOns);
 }, [isEdit, baseline, current]);
 
+const loadAppointmentCapacity = useCallback(async (targetClientId) => {
+  const clientId = String(targetClientId || '').trim();
+  if (!clientId || mode !== 'create') return;
+
+  setAppointmentCapacity((currentState) => ({ ...currentState, clientId, loading: true, canCreate: false, error: '' }));
+  try {
+    const { data } = await API.get(`/appointments/client/${clientId}/capacity`);
+    setAppointmentCapacity({
+      clientId,
+      loading: false,
+      activeAppointments: Array.isArray(data?.activeAppointments) ? data.activeAppointments : [],
+      count: Number(data?.activeAppointmentCount || 0),
+      max: Number(data?.maxActiveAppointments || 2),
+      canCreate: data?.canCreate !== false,
+      error: '',
+    });
+  } catch (error) {
+    console.error('Unable to check appointment capacity:', error?.response?.data || error.message);
+    setAppointmentCapacity((currentState) => ({
+      ...currentState,
+      loading: false,
+      canCreate: false,
+      error: error?.response?.data?.error || 'Unable to verify current appointments. Please try again.',
+    }));
+  }
+}, [mode]);
+
+useEffect(() => {
+  if (mode !== 'create' || guidedStep !== 2 || !activeBookingClientId) return;
+  loadAppointmentCapacity(activeBookingClientId);
+}, [mode, guidedStep, activeBookingClientId, loadAppointmentCapacity]);
+
+const openActiveAppointmentForEdit = (appointment) => {
+  if (!appointment) return;
+  try {
+    sessionStorage.setItem('editingAppointment', JSON.stringify(appointment));
+  } catch (error) {
+    console.error('Unable to prepare appointment edit:', error);
+    toast.error('Unable to open this appointment for editing.');
+    return;
+  }
+  window.location.assign('/booking/schedule');
+};
+
+const cancelActiveAppointmentFromStep2 = async (appointment) => {
+  const appointmentId = getEditingId(appointment);
+  if (!appointmentId) return;
+  const serviceName = appointment?.serviceId?.name || appointment?.service?.name || appointment?.service || 'this appointment';
+  if (!window.confirm(`Cancel ${serviceName}?`)) return;
+
+  try {
+    await API.delete(`/appointments/${appointmentId}`);
+    toast.success('Appointment canceled.');
+    await loadAppointmentCapacity(activeBookingClientId);
+  } catch (error) {
+    toast.error(error?.response?.data?.error || 'Unable to cancel the appointment.');
+  }
+};
+
 // Validity and button state
 // Online client and family booking is capped at two services per person.
 // Runtime settings may further lower this limit, but can never raise it above two.
@@ -532,6 +584,31 @@ const primaryBasketItem = serviceBasket[0] || null;
 const primaryService = mode === 'create' ? (primaryBasketItem?.service || selectedService) : selectedService;
 const workerRequired = !!(mode === 'create' ? primaryService?._id : current.serviceId);
 const hasSelectedServiceForBooking = mode === 'create' ? serviceBasket.length > 0 : !!current.serviceId;
+
+// In create mode, once a service is confirmed the picker pauses until the client
+// explicitly chooses Add another service or Edit. It also stays locked at the
+// online service limit.
+const capacityReadyForActiveClient =
+  String(appointmentCapacity.clientId || '') === String(activeBookingClientId || '') &&
+  !appointmentCapacity.loading;
+
+const capacityBlocksNewAppointment = mode === 'create' && (
+  !capacityReadyForActiveClient ||
+  !appointmentCapacity.canCreate
+);
+
+const servicePickerLocked =
+  mode === 'create' && (
+    capacityBlocksNewAppointment ||
+    (serviceBasket.length > 0 && !isSelectingAdditionalService && !editingBasketItemId)
+  );
+
+useEffect(() => {
+  if (isBackToBackFollower && guidedStep === 3) {
+    setGuidedStep(2);
+  }
+}, [isBackToBackFollower, guidedStep]);
+
 const hasAllRequired = !!(current.clientId && hasSelectedServiceForBooking && current.date && current.time && (!workerRequired || current.workerId));
 const canSubmit = (isEdit ? (hasAllRequired && changed) : hasAllRequired) && !bookingCompleteNotice;
 
@@ -750,6 +827,14 @@ useEffect(() => {
 
 
 useEffect(() => {
+  if (!isBackToBackFollower || !firstFamilyBookingBlock?.date) return;
+  if (selectedDate !== firstFamilyBookingBlock.date) {
+    setSelectedDate(firstFamilyBookingBlock.date);
+    setSelectedTime(null);
+  }
+}, [isBackToBackFollower, firstFamilyBookingBlock, selectedDate]);
+
+useEffect(() => {
   if (!familyTogetherMode || activeFamilyBookingIndex === 0 || !firstFamilyBookingBlock) return;
   if (selectedDate !== firstFamilyBookingBlock.date) setSelectedDate(firstFamilyBookingBlock.date);
 }, [familyTogetherMode, activeFamilyBookingIndex, firstFamilyBookingBlock, selectedDate]);
@@ -770,26 +855,52 @@ useEffect(() => {
 }, [familyTogetherMode, familyScheduleMode, activeFamilyBookingIndex, firstFamilyBookingBlock, selectedWorker, availableTimes, selectedTime]);
 
 
-  const handleServiceClick = async (service) => {
+  const commitServiceSelection = async (service) => {
     const specialDeal = getSpecialDealForService(service, promotionConfig);
     const previousDate = selectedDate;
 
+    if (mode === 'create') setIsSelectingAdditionalService(false);
+
     if (mode === 'create') {
+      const editingItem = editingBasketItemId
+        ? serviceBasket.find((item) => item.id === editingBasketItemId)
+        : null;
+      const duplicateOtherItem = editingItem
+        ? serviceBasket.some((item) => item.id !== editingBasketItemId && idOf(item.service) === idOf(service))
+        : false;
+
+      if (duplicateOtherItem) {
+        toast.info(`${service.name} is already selected. Choose a different service for this line item.`);
+        return;
+      }
+
       const alreadyInBasket = serviceBasket.some((item) => idOf(item.service) === idOf(service));
-      if (!alreadyInBasket && serviceBasket.length >= maxServiceLimit) {
+      if (!editingItem && !alreadyInBasket && serviceBasket.length >= maxServiceLimit) {
         toast.info(bookingSettings.limitMessage || `For more than ${maxServiceLimit} services, please call Rakie Salon so we can allocate enough time for your visit.`);
         return;
       }
 
       let itemId = null;
-      if (alreadyInBasket) {
+      if (editingItem) {
+        itemId = editingItem.id;
+        const sameService = idOf(editingItem.service) === idOf(service);
+        const nextAddOns = sameService ? (editingItem.addOns || []) : [];
+        setServiceBasket((prev) => prev.map((item) =>
+          item.id === editingItem.id ? { ...item, service, addOns: nextAddOns } : item
+        ));
+        setSelectedAddOns(nextAddOns);
+        setEditingBasketItemId(null);
+        setServiceAddedPrompt({ serviceName: service.name, personName: activeBookingPerson?.firstName || 'you', updated: true });
+      } else if (alreadyInBasket) {
         const existing = serviceBasket.find((item) => idOf(item.service) === idOf(service));
         itemId = existing?.id || null;
         setSelectedAddOns(existing?.addOns || []);
+        setServiceAddedPrompt({ serviceName: service.name, personName: activeBookingPerson?.firstName || 'you' });
       } else {
         itemId = `${service._id}-${Date.now()}`;
         setServiceBasket((prev) => [...prev, { id: itemId, service, addOns: [] }]);
         setSelectedAddOns([]);
+        setServiceAddedPrompt({ serviceName: service.name, personName: activeBookingPerson?.firstName || 'you' });
       }
       setActiveBasketItemId(itemId);
     } else {
@@ -830,6 +941,74 @@ useEffect(() => {
     } catch {
       setAddOns([]);
     }
+  };
+
+  const handleServiceClick = async (service) => {
+    if (mode !== 'create') {
+      await commitServiceSelection(service);
+      return;
+    }
+
+    if (editingBasketItemId) {
+      const duplicateOtherItem = serviceBasket.some((item) =>
+        item.id !== editingBasketItemId && idOf(item.service) === idOf(service)
+      );
+      if (duplicateOtherItem) {
+        toast.info(`${service.name} is already selected. Choose a different service for this line item.`);
+        return;
+      }
+      setPendingServiceToAdd(service);
+      return;
+    }
+
+    const alreadyInBasket = serviceBasket.some((item) => idOf(item.service) === idOf(service));
+    if (alreadyInBasket) {
+      await commitServiceSelection(service);
+      return;
+    }
+
+    if (serviceBasket.length >= maxServiceLimit) {
+      toast.info(bookingSettings.limitMessage || `For more than ${maxServiceLimit} services, please call Rakie Salon so we can allocate enough time for your visit.`);
+      return;
+    }
+
+    setPendingServiceToAdd(service);
+  };
+
+
+  const beginEditBasketItem = async (item) => {
+    if (!item?.service) return;
+    setActiveBasketItemId(item.id);
+    setEditingBasketItemId(item.id);
+    setIsSelectingAdditionalService(false);
+    setServiceAddedPrompt(null);
+    setPendingServiceToAdd(null);
+    setSelectedService(item.service);
+    if (item.service?.category) setSelectedCategory(item.service.category);
+    setSelectedAddOns(item.addOns || []);
+    try {
+      const { data } = await API.get(`/services/${item.service._id}/addons`);
+      setAddOns(data || []);
+    } catch {
+      setAddOns([]);
+    }
+    requestAnimationFrame(() => document.querySelector('.rakie-service-browser')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  const prepareToAddAnotherService = () => {
+    if (serviceBasket.length >= maxServiceLimit) {
+      toast.info(bookingSettings.limitMessage || `For more than ${maxServiceLimit} services, please call Rakie Salon so we can allocate enough time for your visit.`);
+      return;
+    }
+    setEditingBasketItemId(null);
+    setActiveBasketItemId(null);
+    setIsSelectingAdditionalService(true);
+    setServiceAddedPrompt(null);
+    setPendingServiceToAdd(null);
+    setSelectedService(null);
+    setSelectedAddOns([]);
+    setAddOns([]);
+    requestAnimationFrame(() => document.querySelector('.rakie-service-browser')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   const removeBasketItem = (itemId) => {
@@ -902,6 +1081,12 @@ function persistClientForDashboard() {
       { _id: current.clientId, firstName: editingAppointment?.client?.firstName, lastName: editingAppointment?.client?.lastName };
     if (minimal && minimal._id) {
       localStorage.setItem('client', JSON.stringify(minimal));
+      bookingDebug('PERSIST_CLIENT_FOR_DASHBOARD', {
+        clientId: minimal._id,
+        currentClientId: current.clientId,
+        effectiveClientId: effectiveClient?._id,
+        activeBookingClientId,
+      });
     }
   } catch {console.log("id is bad must reinter phone")}
 }
@@ -963,6 +1148,7 @@ const captureFamilyStepSelection = () => ({
   activeBasketItemId,
   couponCode,
   couponResult,
+  guidedStep,
 });
 
 const restoreFamilyStepSelection = (snapshot, preferredDate = null) => {
@@ -986,7 +1172,11 @@ const restoreFamilyStepSelection = (snapshot, preferredDate = null) => {
   setShowAddOnModal(false);
   setCouponCode(snapshot.couponCode || '');
   setCouponResult(snapshot.couponResult || null);
+  setGuidedStep(snapshot.guidedStep || (snapshot.selectedTime ? 4 : snapshot.selectedDate ? 3 : snapshot.serviceBasket?.length ? 2 : 1));
   setBookingCompleteNotice(null);
+  setServiceAddedPrompt(null);
+  setIsSelectingAdditionalService(false);
+  setFamilyFinalReviewRows(null);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
@@ -1020,12 +1210,74 @@ const resetForNextFamilyMember = (preferredDate = null) => {
   setShowAddOnModal(false);
   setCouponCode('');
   setCouponResult(null);
+  setGuidedStep(1);
   setBookingCompleteNotice(null);
+  setServiceAddedPrompt(null);
+  setIsSelectingAdditionalService(false);
+  setFamilyFinalReviewRows(null);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
 const handleSubmit = async () => {
   if (isSubmitting) return;
+
+  bookingDebug('SUBMIT_START', {
+    mode,
+    guidedStep,
+    effectiveClientId: effectiveClient?._id,
+    currentClientId: current.clientId,
+    activeBookingClientId,
+    selectedBookingClientIds,
+    activeFamilyBookingIndex,
+    selectedServiceId: current.serviceId,
+    selectedServiceName: selectedService?.name,
+    selectedDate: current.date,
+    selectedTime: current.time,
+    basket: serviceBasket.map((item) => ({
+      basketId: item.id || item.basketId,
+      serviceId: item.service?._id,
+      service: item.service?.name,
+      addOnIds: (item.addOns || []).map((a) => a?._id),
+    })),
+  });
+
+  if (mode === 'create' && familyFinalReviewRows?.length) {
+    setIsSubmitting(true);
+    try {
+      bookingDebug('FAMILY_FINAL_BATCH_BEFORE_POST', {
+        bookingOwnerClientId: effectiveClient?._id,
+        rows: familyFinalReviewRows.map((row) => ({
+          clientId: row?.clientId,
+          serviceId: row?.serviceId,
+          service: row?.service,
+          date: row?.date,
+          time: row?.time,
+          status: row?.status,
+          bookingFlags: row?.bookingFlags,
+        })),
+      });
+      const familyBatchResponse = await API.post('/appointments/batch', {
+        appointments: familyFinalReviewRows,
+        bookingOwnerClientId: effectiveClient?._id,
+        bookingOwnerPhone: effectiveClient?.phone,
+      });
+      bookingDebug('FAMILY_FINAL_BATCH_RESPONSE', {
+        status: familyBatchResponse?.status,
+        data: familyBatchResponse?.data,
+      });
+      toast.success('Family appointments submitted together for salon confirmation');
+      clearOnlineBookingCount();
+      persistClientForDashboard();
+      window.location.replace('/booking/dashboard');
+      return;
+    } catch (err) {
+      console.error('[family batch save error]', err?.response?.data || err?.message || err);
+      const responseData = err?.response?.data || {};
+      toast.error(responseData?.error || responseData?.message || 'Failed to save family appointments');
+      setIsSubmitting(false);
+      return;
+    }
+  }
 
  if (!hasAllRequired) {
    if (!current.clientId) toast.error('Missing client — please (re)identify yourself.');
@@ -1139,6 +1391,13 @@ const handleSubmit = async () => {
 }
     }
    console.log('[client post] /appointments payload =', payload);
+   bookingDebug('BASE_PAYLOAD_READY', {
+     payload,
+     effectiveClientId: effectiveClient?._id,
+     currentClientId: current.clientId,
+     activeBookingClientId,
+     selectedBookingClientIds,
+   });
 
     // Family booking is completed person-by-person. Nothing is posted until the final person is ready.
     if (mode === 'create' && selectedBookingClientIds.length > 1) {
@@ -1226,15 +1485,11 @@ const handleSubmit = async () => {
         return;
       }
 
-      await API.post('/appointments/batch', {
-        appointments: nextDrafts,
-        bookingOwnerClientId: effectiveClient?._id,
-        bookingOwnerPhone: effectiveClient?.phone,
-      });
-      toast.success('Family appointments submitted together for salon confirmation');
-      clearOnlineBookingCount();
-      persistClientForDashboard();
-      window.location.replace('/booking/dashboard');
+      setFamilyBookingDrafts(nextDrafts);
+      setFamilyStepSelections((existing) => ({ ...existing, [activeClientKey]: currentSnapshot }));
+      setFamilyFinalReviewRows(nextDrafts);
+      setIsSubmitting(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
@@ -1255,20 +1510,82 @@ const handleSubmit = async () => {
         return row;
       });
 
-      await API.post('/appointments/batch', { appointments });
+      bookingDebug('SELF_MULTI_BATCH_BEFORE_POST', {
+        effectiveClientId: effectiveClient?._id,
+        currentClientId: current.clientId,
+        activeBookingClientId,
+        appointments,
+      });
+      const batchResponse = await API.post('/appointments/batch', { appointments });
+      bookingDebug('SELF_MULTI_BATCH_RESPONSE', {
+        status: batchResponse?.status,
+        data: batchResponse?.data,
+      });
+
+      const verifyClientId = String(payload.clientId || effectiveClient?._id || current.clientId || '');
+      if (verifyClientId) {
+        try {
+          const verifyResponse = await API.get(`/appointments/client/${verifyClientId}`, {
+            params: { rakieDebugTs: Date.now() },
+          });
+          bookingDebug('SELF_MULTI_POST_SAVE_CLIENT_LOOKUP', {
+            clientId: verifyClientId,
+            httpStatus: verifyResponse?.status,
+            summary: summarizeClientAppointmentResponse(verifyResponse?.data, verifyClientId),
+          });
+        } catch (verifyErr) {
+          bookingDebug('SELF_MULTI_POST_SAVE_CLIENT_LOOKUP_ERROR', {
+            clientId: verifyClientId,
+            httpStatus: verifyErr?.response?.status,
+            response: verifyErr?.response?.data,
+            message: verifyErr?.message,
+          });
+        }
+      }
+
       toast.success('Appointments successfully saved together');
       clearOnlineBookingCount();
       persistClientForDashboard();
+      bookingDebug('SELF_MULTI_REDIRECT_TO_DASHBOARD', {
+        target: '/booking/dashboard',
+        persistedClientId: effectiveClient?._id || current.clientId,
+      });
       window.location.replace('/booking/dashboard');
       return;
     }
 
-    await API.post('/appointments', payload);
+    bookingDebug('SINGLE_APPOINTMENT_BEFORE_POST', { payload });
+    const singleResponse = await API.post('/appointments', payload);
+    bookingDebug('SINGLE_APPOINTMENT_RESPONSE', {
+      status: singleResponse?.status,
+      data: singleResponse?.data,
+    });
     toast.success('Appointment successfully saved');
 
     if (mode === 'create') {
+      const verifyClientId = String(payload.clientId || effectiveClient?._id || current.clientId || '');
+      if (verifyClientId) {
+        try {
+          const verifyResponse = await API.get(`/appointments/client/${verifyClientId}`, {
+            params: { rakieDebugTs: Date.now() },
+          });
+          bookingDebug('SINGLE_POST_SAVE_CLIENT_LOOKUP', {
+            clientId: verifyClientId,
+            httpStatus: verifyResponse?.status,
+            summary: summarizeClientAppointmentResponse(verifyResponse?.data, verifyClientId),
+          });
+        } catch (verifyErr) {
+          bookingDebug('SINGLE_POST_SAVE_CLIENT_LOOKUP_ERROR', {
+            clientId: verifyClientId,
+            httpStatus: verifyErr?.response?.status,
+            response: verifyErr?.response?.data,
+            message: verifyErr?.message,
+          });
+        }
+      }
       clearOnlineBookingCount();
       persistClientForDashboard();
+      bookingDebug('SINGLE_REDIRECT_TO_DASHBOARD', { target: '/booking/dashboard' });
       window.location.replace('/booking/dashboard');
       return;
     }
@@ -1409,11 +1726,11 @@ const tightCalendarCSS = (
     }
 
     /* 4) Today + Selected styles (lightweight) */
-    .fc .fc-day-today { background: #f0fdf4 !important; } /* green-50 */
-    .fc .is-selected { background: #2563eb !important; color: #FFA500 !important; }
+    .fc .fc-day-today { background: #faf6f0 !important; }
+    .fc .is-selected { background: #f7eaed !important; color: #5d1b28 !important; box-shadow: inset 0 0 0 1px #7b2636; }
 
     /* 5) Hover feedback without adding height */
-    .fc .fc-daygrid-day-frame:hover { background: #eff6ff; } /* blue-50 */
+    .fc .fc-daygrid-day-frame:hover { background: #fbf3f4; }
     .fc .fc-day-disabled { background: transparent !important; opacity: 1 !important; }
 
   `}</style>
@@ -1443,11 +1760,11 @@ const formatNoticeRange = (notice) => {
 };
 
 return (
-<div className="p-2 relative max-w-screen-md mx-auto">
+<div className="rakie-schedule p-2 relative max-w-screen-md mx-auto">
     {tightCalendarCSS}
 
   <div className="p-2 relative max-w-screen-md mx-auto">
-    <div className="sticky top-0 z-40 bg-white border-b py-3 px-4 shadow-sm flex flex-col gap-1">
+    <div className="rakie-booking-header sticky top-0 z-40 bg-white border-b py-3 px-4 shadow-sm flex flex-col gap-1">
       <div className="flex justify-between items-center">
         <div className="text-sm font-semibold text-gray-700">
           <div>
@@ -1458,21 +1775,38 @@ return (
             onClick={handleSignInAsDifferentUser}
             className="mt-1 text-xs font-medium text-blue-600 underline hover:text-blue-800"
           >
-            Sign out / use a different account
+            Sign out
           </button>
         </div>
         <img src={logo} alt="Logo" className="h-8 w-8" />
       </div>
 
-      {/* Booking progress summary. Service names/prices stay in the Your services tile only. */}
+      {/* Compact booking summary. Hidden on the final review step to avoid duplicate review information. */}
       <div className="text-center font-medium text-sm text-gray-800">
         {mode === 'create' ? (
-          <>
-            {basketServiceCount > 0 ? `${basketServiceCount} service${basketServiceCount === 1 ? '' : 's'} selected` : 'Select services'}
-            {selectedWorker && <> · {selectedWorker.displayName || workerDisplayName(selectedWorker)}</>}
-            {selectedDate && <> → {selectedDate}</>}
-            {selectedTime && <> @ {format24To12(selectedTime)}</>}
-          </>
+          guidedStep < 4 ? (
+            <>
+              {guidedStep === 1 ? (selectedBookingClientIds.length > 1 ? `${selectedBookingClientIds.length} family members selected` : 'Booking for myself') : (
+                <>
+                  <strong>{selectedBookingClientIds.length > 1 ? `For ${activeBookingPerson?.firstName || 'family member'}: ` : ''}</strong>
+                  {guidedStep === 2 ? (
+                    selectedWorker
+                      ? <>Booking with {selectedWorker.displayName || workerDisplayName(selectedWorker)}</>
+                      : 'Choose a service'
+                  ) : (
+                    <>
+                      {serviceBasket.length > 0
+                        ? `${serviceBasket.length} service${serviceBasket.length === 1 ? '' : 's'} selected`
+                        : 'Choose a service'}
+                      {selectedWorker && <> · {selectedWorker.displayName || workerDisplayName(selectedWorker)}</>}
+                      {selectedDate && <> → {selectedDate}</>}
+                      {selectedTime && <> @ {format24To12(selectedTime)}</>}
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          ) : null
         ) : (
           <>
             {selectedService?.name || 'Select a Service'}
@@ -1523,25 +1857,67 @@ return (
 
       </div>
 
-      {mode === 'create' && effectiveClient?._id && (
-        <div className="mx-1 mt-2">
-          {!showFamilyBookingPanel ? (
-            <div className="flex justify-end">
+      {mode === 'create' && (
+        <div className="rakie-guided-progress mx-1 mt-3">
+          <div className="rakie-step-track" aria-label="Booking progress">
+            {[
+              { n: 1, label: 'Who' },
+              { n: 2, label: 'Service' },
+              { n: 3, label: 'Date & time' },
+              { n: 4, label: 'Review' },
+            ].map((step) => (
               <button
                 type="button"
-                onClick={() => setShowFamilyBookingPanel(true)}
-                className="relative inline-flex h-11 w-auto items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-3 text-sm font-semibold text-blue-800 shadow-sm transition hover:border-blue-400 hover:bg-blue-50 hover:shadow"
-                aria-label="Family Booking"
-                title="Family Booking"
+                key={step.n}
+                className={`rakie-step ${guidedStep === step.n ? 'is-current' : ''} ${guidedStep > step.n ? 'is-complete' : ''}`}
+                onClick={() => {
+                  if (step.n === 1) setGuidedStep(1);
+                  if (step.n === 2) setGuidedStep(2);
+                  if (step.n === 3 && serviceBasket.length > 0 && (!workerRequired || current.workerId)) setGuidedStep(3);
+                  if (step.n === 4 && selectedDate && selectedTime) setGuidedStep(4);
+                }}
+                disabled={(step.n === 3 && (serviceBasket.length === 0 || (workerRequired && !current.workerId))) || (step.n === 4 && (!selectedDate || !selectedTime))}
               >
-                <img src={familyHubIcon} alt="" className="h-8 w-8 object-contain" />
-                <span>Family Booking</span>
-                {selectedBookingClientIds.length > 1 && (
-                  <span className="absolute right-2 top-2 min-w-[18px] rounded-full bg-yellow-400 px-1 text-center text-[10px] font-bold leading-[18px] text-gray-900">
-                    {selectedBookingClientIds.length}
-                  </span>
-                )}
+                <span className="rakie-step-number">{guidedStep > step.n ? '✓' : step.n}</span>
+                <span>{step.label}</span>
               </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode === 'create' && effectiveClient?._id && guidedStep === 1 && (
+        <div className="mx-1 mt-2">
+          {!showFamilyBookingPanel ? (
+            <div className="rakie-guided-panel mt-0">
+              <div className="rakie-eyebrow">STEP 1 OF 4</div>
+              <h2 className="rakie-guided-title">Who is this appointment for?</h2>
+              <p className="rakie-guided-copy">Choose yourself or Family Booking.</p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => { setGuidedStep(2); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  className="rakie-choice-card"
+                >
+                  <span className="rakie-choice-title">For myself</span>
+                  <span className="rakie-choice-copy">Book your appointment.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFamilyBookingPanel(true)}
+                  className="rakie-choice-card rakie-family-choice-card"
+                  aria-label="Family Booking"
+                >
+                  <img src={familyHubIcon} alt="" className="h-10 w-10 object-contain" />
+                  <span>
+                    <span className="rakie-choice-title">Family Booking</span>
+                    <span className="rakie-choice-copy">Book up to two people.</span>
+                  </span>
+                </button>
+              </div>
+              <div className="mt-4 flex justify-center">
+                <button type="button" onClick={handleCancelBooking} className="px-5 py-2 bg-gray-200 hover:bg-gray-300 rounded">Cancel</button>
+              </div>
             </div>
           ) : (
             <section className="rounded-lg border border-blue-200 bg-blue-50 p-3 shadow-sm">
@@ -1576,8 +1952,8 @@ return (
               </div>
           <div className="flex items-center justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-blue-900">Who is this booking for?</h3>
-              <p className="text-xs text-blue-700">Select one or two people. Each person can have a different service and stylist. Choose whether their appointments are independent or coordinated together.</p>
+              <h3 className="text-sm font-semibold text-blue-900">Choose who you&apos;re booking for</h3>
+              <p className="text-xs text-blue-700">Select up to 2 people.</p>
             </div>
             <button
               type="button"
@@ -1598,12 +1974,10 @@ return (
 
             return (
               <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">
-                <div className="font-semibold">
-                  Selected: {selectedNames.join(' + ')}
-                </div>
+                <div className="font-semibold">{selectedNames.join(' + ')}</div>
                 <div className="mt-0.5 text-xs sm:text-sm">
+                  {familyBookingDrafts.length > 0 && <span className="mr-1">✓ Previous person saved.</span>}
                   Now booking <strong>{progressNumber} of {selectedBookingClientIds.length}</strong>: <strong>{activePerson?.firstName || 'family member'}</strong>.
-                  {familyBookingDrafts.length > 0 && <span> Previous selections are saved and all appointments will be submitted together.</span>}
                 </div>
               </div>
             );
@@ -1611,28 +1985,28 @@ return (
 
           {selectedBookingClientIds.length > 1 && familyBookingDrafts.length === 0 && (
             <div className="mt-2 rounded border border-blue-200 bg-white p-2">
-              <div className="text-xs font-semibold text-blue-900">How should the family appointments be scheduled?</div>
+              <div className="text-xs font-semibold text-blue-900">Next: choose how to schedule them</div>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'individual' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
                   <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'individual'} onChange={() => setFamilyScheduleMode('individual')} />
-                  <strong>Flexible individual times</strong><br />Choose any available date and time for each person.
+                  <strong>Separate times</strong><br />Choose each person&apos;s time separately.
                 </label>
                 {!effectiveSingleStylist && <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'together-auto' ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
                   <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'together-auto'} onChange={() => setFamilyScheduleMode('together-auto')} />
-                  <strong>Book together — best fit</strong><br />Same time with different available stylists; otherwise back-to-back.
+                  <strong>Best fit together</strong><br />We&apos;ll show the closest available times.
                 </label>}
                 {!effectiveSingleStylist && <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'together-same' ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
                   <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'together-same'} onChange={() => setFamilyScheduleMode('together-same')} />
-                  <strong>Same start time</strong><br />Requires different stylists who are both available.
+                  <strong>Same start time</strong><br />Different available stylists required.
                 </label>}
                 {effectiveSingleStylist && (
                   <div className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800">
-                    One stylist is available. Family appointments can be booked back-to-back or at separate times.
+                    One stylist is available — choose separate or back-to-back times.
                   </div>
                 )}
                 <label className={`cursor-pointer rounded border p-2 text-xs ${familyScheduleMode === 'together-back-to-back' ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
                   <input type="radio" name="familyScheduleMode" className="mr-2" checked={familyScheduleMode === 'together-back-to-back'} onChange={() => setFamilyScheduleMode('together-back-to-back')} />
-                  <strong>Back-to-back</strong><br />The second appointment starts when the first one ends.
+                  <strong>Back-to-back</strong><br />Second appointment starts after the first.
                 </label>
               </div>
             </div>
@@ -1640,7 +2014,7 @@ return (
 
           {familyTogetherMode && activeFamilyBookingIndex > 0 && firstFamilyBookingBlock && (
             <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              Together booking is locked to <strong>{firstFamilyBookingBlock.date}</strong>. Available times are limited to <strong>{format24To12(firstFamilyBookingBlock.startTime)}</strong> with a different stylist or <strong>{format24To12(firstFamilyBookingBlock.endTime)}</strong> back-to-back, according to the selected mode.
+              Now choose <strong>{activeBookingPerson?.firstName || 'the next person'}</strong>&apos;s time. Available times are already limited to keep the appointments together.
             </div>
           )}
 
@@ -1750,9 +2124,39 @@ return (
             </div>
           )}
 
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              className="rakie-primary-button px-5 py-2 text-white"
+              disabled={selectedBookingClientIds.length === 0}
+              onClick={() => { setGuidedStep(2); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            >
+              Continue to services →
+            </button>
+          </div>
+
             </section>
           )}
         </div>
+      )}
+
+      {pendingServiceToAdd && createPortal(
+        <div className="fixed inset-0 flex items-center justify-center bg-black/55 p-4" style={{ zIndex: 100000 }} role="dialog" aria-modal="true" aria-label="Add service">
+          <div className="rakie-add-service-modal w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="rakie-eyebrow">{editingBasketItemId ? 'EDIT SERVICE' : 'ADD SERVICE'}</div>
+            <h3 className="mt-1 text-xl font-bold text-gray-900">{editingBasketItemId ? `Change to ${pendingServiceToAdd.name}?` : `Add ${pendingServiceToAdd.name}?`}</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              {editingBasketItemId
+                ? <>This will replace the selected service for <strong>{activeBookingPerson?.firstName || 'your'}</strong>{activeBookingPerson?.firstName ? "'s" : ''} appointment.</>
+                : <>This service will be added to <strong>{activeBookingPerson?.firstName || 'your'}</strong>{activeBookingPerson?.firstName ? "'s" : ''} appointment.</>}
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button type="button" className="rakie-secondary-button flex-1" onClick={() => setPendingServiceToAdd(null)}>{editingBasketItemId ? 'Keep current' : 'Not yet'}</button>
+              <button type="button" className="rakie-primary-button flex-1" onClick={async () => { const service = pendingServiceToAdd; setPendingServiceToAdd(null); await commitServiceSelection(service); }}>{editingBasketItemId ? 'Update service' : 'Add service'}</button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {familyPhonePromptOpen && createPortal(
@@ -1821,53 +2225,6 @@ return (
         </details>
       )}
 
-      {mode === 'create' && (
-        <div className="my-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="font-semibold">Your services</div>
-              <div className="text-xs text-blue-700">Add all services first, then choose one date and time. We will check the total time before booking.</div>
-            </div>
-            <div className="text-xs font-semibold">{basketServiceCount} of {maxServiceLimit} selected</div>
-          </div>
-
-          {serviceBasket.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              {serviceBasket.map((item, index) => (
-                <div key={item.id} className="flex items-start justify-between gap-2 rounded border border-blue-100 bg-white px-3 py-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveBasketItemId(item.id);
-                      setSelectedService(item.service);
-                      setSelectedAddOns(item.addOns || []);
-                      API.get(`/services/${item.service._id}/addons`).then(({ data }) => setAddOns(data || [])).catch(() => setAddOns([]));
-                    }}
-                    className="text-left"
-                  >
-                    <div className="font-semibold">{index + 1}. {item.service.name}</div>
-                    <div className="text-xs text-gray-600">{basketItemDuration(item)} min{(item.addOns || []).length ? ` · Add-ons: ${(item.addOns || []).map(a => a.name).join(', ')}` : ''}</div>
-                  </button>
-                  <button type="button" onClick={() => removeBasketItem(item.id)} className="text-xs font-semibold text-red-600 underline">Remove</button>
-                </div>
-              ))}
-              <div className="text-xs font-semibold text-blue-800">Total estimated time: {basketTotalDuration} minutes</div>
-            </div>
-          ) : (
-            <div className="mt-3 rounded border border-dashed border-blue-200 bg-white px-3 py-2 text-xs text-blue-700">Choose the first service below to start.</div>
-          )}
-
-          {serviceBasket.length >= maxServiceLimit ? (
-            <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              {bookingSettings.limitMessage || `For more than ${maxServiceLimit} services, please call Rakie Salon so we can allocate enough time for your visit.`}
-              <a className="ml-2 font-semibold underline" href={`tel:${RAKIE_PHONE}`}>Call Rakie Salon</a>
-            </div>
-          ) : serviceBasket.length > 0 && (
-            <div className="mt-3 text-xs text-blue-700">Use the service list below to add another service before choosing date and time.</div>
-          )}
-        </div>
-      )}
-
       {showAddOnModal && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded shadow-md w-full max-w-md">
@@ -1908,15 +2265,219 @@ return (
           </div>
         </div>
       )}
-  <div className="flex gap-4 items-start">
+  {(mode !== 'create' || guidedStep === 2) && (
+    <div className="rakie-guided-panel">
+      {mode === 'create' && (
+        <div className="mb-4">
+          <div className="rakie-eyebrow">STEP 2 OF 4</div>
+          <h2 className="rakie-guided-title">Select the service you’d like.</h2>
+          {selectedBookingClientIds.length > 1 && (
+            <div className="rakie-booking-for">Choosing services for <strong>{activeBookingPerson?.firstName || 'family member'} {activeBookingPerson?.lastName || ''}</strong></div>
+          )}
+          <p className="rakie-guided-copy">Choose a service, then confirm that you want to add it to this appointment.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={() => { setGuidedStep(1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="px-4 py-2 rounded border border-blue-300 bg-white text-blue-700 hover:bg-blue-50">← Back</button>
+            <button type="button" onClick={handleCancelBooking} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded">Cancel</button>
+          </div>
+        </div>
+      )}
+      {mode === 'create' && (
+        <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-gray-900">
+                {activeBookingPerson?.firstName || 'Your'} active appointments
+              </div>
+              <div className="text-xs text-gray-500">
+                {!capacityReadyForActiveClient
+                  ? 'Checking current appointments…'
+                  : `${appointmentCapacity.count} of ${appointmentCapacity.max} active appointments`}
+              </div>
+            </div>
+            {capacityReadyForActiveClient && appointmentCapacity.canCreate && appointmentCapacity.count > 0 && (
+              <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                Booking available
+              </span>
+            )}
+          </div>
+
+          {appointmentCapacity.error && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {appointmentCapacity.error}
+            </div>
+          )}
+
+          {capacityReadyForActiveClient && appointmentCapacity.activeAppointments.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {appointmentCapacity.activeAppointments.map((appointment) => (
+                <div key={getEditingId(appointment) || `${appointment.date}-${appointment.time}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="min-w-0 text-xs text-gray-700">
+                    <div className="font-semibold text-gray-900">
+                      {appointment?.serviceId?.name || appointment?.service?.name || appointment?.service || 'Service'}
+                    </div>
+                    <div>
+                      {appointment.date} @ {format24To12(appointment.time)}
+                      {appointment.status && <span className="ml-1 uppercase text-gray-500">({appointment.status})</span>}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    {appointment?.canEditAppointment !== false && (
+                      <button type="button" onClick={() => openActiveAppointmentForEdit(appointment)} className="rakie-review-edit">Edit</button>
+                    )}
+                    {appointment?.canCancelAppointment !== false && (
+                      <button type="button" onClick={() => cancelActiveAppointmentFromStep2(appointment)} className="rakie-review-remove">Cancel</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {capacityReadyForActiveClient && !appointmentCapacity.canCreate && !appointmentCapacity.error && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Maximum active appointments reached. Edit or cancel an appointment above before starting another booking.
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'create' && serviceBasket.length > 0 && (
+        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+          <div className="mb-2">
+            <div className="text-sm font-semibold text-gray-900">Selected services for {activeBookingPerson?.firstName || 'you'}</div>
+            <div className="text-xs text-gray-600">{serviceBasket.length} of {maxServiceLimit} services selected</div>
+          </div>
+          <div className="space-y-2">
+            {serviceBasket.map((item, index) => (
+              <div key={item.id || index} className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-white px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-gray-900">{index + 1}. {item.service?.name || 'Service'}</div>
+                  <div className="text-xs text-gray-500">
+                    {basketItemDuration(item)} min
+                    {(item.addOns || []).length ? ` · Add-ons: ${(item.addOns || []).map((addOn) => addOn.name).join(', ')}` : ''}
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button type="button" className="rakie-review-edit" onClick={() => beginEditBasketItem(item)}>Edit</button>
+                  <button type="button" className="rakie-review-remove" onClick={() => removeBasketItem(item.id)}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {serviceBasket.length >= maxServiceLimit && (
+            <div className="mt-2 text-xs font-medium text-gray-600">Maximum {maxServiceLimit} services per client for online booking.</div>
+          )}
+
+          {editingBasketItemId ? (
+            <div className="rakie-service-selection-cue">Choose a replacement service below.</div>
+          ) : isSelectingAdditionalService ? (
+            <div className="rakie-service-selection-cue">Choose your next service below.</div>
+          ) : (
+            <div className="rakie-service-next-actions">
+              {serviceBasket.length < maxServiceLimit && (
+                <button
+                  type="button"
+                  className="rakie-secondary-button"
+                  onClick={prepareToAddAnotherService}
+                >
+                  + Add another service
+                </button>
+              )}
+              {isBackToBackFollower ? (
+                <>
+                  <button
+                    type="button"
+                    className="rakie-primary-button rakie-guided-next"
+                    disabled={
+                      (workerRequired && !current.workerId) ||
+                      !selectedDate ||
+                      !selectedTime ||
+                      selectedDate !== firstFamilyBookingBlock?.date ||
+                      selectedTime !== firstFamilyBookingBlock?.endTime
+                    }
+                    onClick={() => {
+                      setServiceAddedPrompt(null);
+                      setGuidedStep(4);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  >
+                    Review & book →
+                  </button>
+                  <button
+                    type="button"
+                    className="rakie-secondary-button"
+                    onClick={() => {
+                      setFamilyScheduleMode('individual');
+                      setSelectedTime(null);
+                      setGuidedStep(3);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  >
+                    Change scheduling
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="rakie-primary-button rakie-guided-next"
+                  disabled={workerRequired && !current.workerId}
+                  onClick={() => { setServiceAddedPrompt(null); setGuidedStep(3); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                >
+                  Go to date & time →
+                </button>
+              )}
+            </div>
+          )}
+
+          {isBackToBackFollower && serviceBasket.length > 0 && !editingBasketItemId && !isSelectingAdditionalService && (
+            <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-center text-xs text-green-800">
+              Back-to-back selected. {activeBookingPerson?.firstName || 'This appointment'} will start at <strong>{format24To12(firstFamilyBookingBlock?.endTime)}</strong> on the same day as the first appointment.
+              {!selectedTime && current.workerId && <div className="mt-1">Checking that exact time with the selected stylist…</div>}
+            </div>
+          )}
+
+          {workerRequired && !current.workerId && !editingBasketItemId && !isSelectingAdditionalService && (
+            <div className="mt-2 text-center text-xs text-amber-800">Choose a stylist before continuing.</div>
+          )}
+        </div>
+      )}
+
+      {servicePickerLocked && (
+        <div className="rakie-service-picker-lock-note" role="status">
+          {!capacityReadyForActiveClient
+            ? 'Checking active appointments before service selection…'
+            : !appointmentCapacity.canCreate
+              ? `Service selection is unavailable because ${activeBookingPerson?.firstName || 'this client'} already has the maximum number of active appointments.`
+              : serviceBasket.length >= maxServiceLimit
+                ? `Maximum ${maxServiceLimit} services selected. Continue to date & time, or edit/remove a selected service.`
+                : 'Service selection is paused. Choose “Add another service” or “Go to date & time” above.'}
+        </div>
+      )}
+
+      <div
+        className={`rakie-service-browser flex gap-4 items-start ${servicePickerLocked ? 'rakie-service-browser--locked' : ''}`}
+        aria-disabled={servicePickerLocked ? 'true' : undefined}
+      >
         <div className="flex flex-col gap-2 w-max">
-          <div className="text-sm font-semibold">Category</div>
+          <div className={`rakie-step2-prompt ${categorySelectionMade ? 'is-done' : 'is-active'}`}>
+            <span className="rakie-step2-number">{categorySelectionMade ? '✓' : '1'}</span>
+            <span>
+              <span className="rakie-step2-kicker">CATEGORY</span>
+              <span className="rakie-step2-help">
+                {categorySelectionMade ? `Selected: ${selectedCategory}` : 'Start here — choose a category'}
+              </span>
+            </span>
+          </div>
           {categories.map(cat => (
             <button
               key={cat}
-              className={`px-2 py-1 text-sm rounded whitespace-nowrap ${selectedCategory === cat ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
+              disabled={servicePickerLocked}
+              aria-disabled={servicePickerLocked ? 'true' : undefined}
+              className={`rakie-category-pill px-3 py-2 text-sm rounded-full whitespace-nowrap ${selectedCategory === cat ? 'is-selected' : ''} ${servicePickerLocked ? 'cursor-not-allowed opacity-55' : ''}`}
               onClick={() => {
                 setSelectedCategory(cat);
+                setCategorySelectionMade(true);
                 if (mode !== 'create') {
                   setSelectedService(null);
                   setSelectedWorker(null);
@@ -1932,11 +2493,22 @@ return (
           ))}
         </div>
 
-        <div className="flex flex-col gap-2 w-max">
-          <div className="text-sm font-semibold">Services</div>
+        <div className="rakie-service-list flex flex-col gap-2 w-max">
+          <div className={`rakie-step2-prompt ${categorySelectionMade ? 'is-active' : 'is-muted'}`}>
+            <span className="rakie-step2-number">2</span>
+            <span>
+              <span className="rakie-step2-kicker">SERVICES</span>
+              <span className="rakie-step2-help">
+                {categorySelectionMade
+                  ? `Choose a service${selectedCategory ? ` from ${selectedCategory}` : ''}`
+                  : 'Choose a category first'}
+              </span>
+            </span>
+          </div>
           {services.filter(s => s.category === selectedCategory).map(service => {
             const specialDeal = shouldShowClientPromotion ? getSpecialDealForService(service, promotionConfig) : null;
             const isSelected = selectedService?._id === service._id;
+            const isInBasket = mode === 'create' && serviceBasket.some((item) => idOf(item.service) === idOf(service));
             const priceOpen = openPriceServiceId === service._id;
             return (
               <div
@@ -1946,16 +2518,18 @@ return (
               >
                 <button
                   type="button"
-                  className={`min-w-0 flex-1 px-2 py-1 text-sm rounded whitespace-nowrap text-left ${
-                    isSelected
+                  disabled={servicePickerLocked}
+                  aria-disabled={servicePickerLocked ? 'true' : undefined}
+                  className={`rakie-service-choice min-w-0 flex-1 px-3 py-2 text-sm rounded-lg text-left ${
+                    (isSelected || isInBasket)
                       ? 'bg-blue-600 text-white'
                       : specialDeal
                         ? 'bg-amber-50 border border-amber-300 text-gray-900'
                         : 'bg-gray-100'
-                  }`}
+                  } ${servicePickerLocked ? 'cursor-not-allowed opacity-55' : ''}`}
                   onClick={() => handleServiceClick(service)}
                 >
-                  <span className="block">{service.name}</span>
+                  <span className="flex items-center justify-between gap-2"><span>{service.name}</span>{isInBasket && <span aria-hidden="true">✓</span>}</span>
                   {service.isAddOn && (
                     <span className="block text-[11px] opacity-80">Add-on or separate service</span>
                   )}
@@ -1973,6 +2547,7 @@ return (
                   type="button"
                   aria-label={`Pricing information for ${service.name}`}
                   aria-expanded={priceOpen}
+                  disabled={servicePickerLocked}
                   title={clientPriceMessage(service)}
                   onMouseEnter={() => setOpenPriceServiceId(service._id)}
                   onFocus={() => setOpenPriceServiceId(service._id)}
@@ -1982,7 +2557,7 @@ return (
                     isSelected
                       ? 'border-blue-600 bg-blue-50 text-blue-700'
                       : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                  }`}
+                  } ${servicePickerLocked ? 'cursor-not-allowed opacity-55' : ''}`}
                 >
                   $
                 </button>
@@ -2100,8 +2675,25 @@ return (
         </div>
       )}
 
-      <div className="flex flex-row gap-4 items-start mt-4">
-      <div className="border rounded shadow p-1 w-[300px] overflow-hidden">
+    </div>
+  )}
+
+      {(mode !== 'create' || (guidedStep === 3 && !isBackToBackFollower)) && (
+        <div className="rakie-guided-panel">
+          {mode === 'create' && (
+            <div className="mb-4">
+              <div className="rakie-eyebrow">STEP 3 OF 4</div>
+              <h2 className="rakie-guided-title">When would you like to come in?</h2>
+              {selectedBookingClientIds.length > 1 && <div className="rakie-booking-for">Choosing date and time for <strong>{activeBookingPerson?.firstName || 'family member'} {activeBookingPerson?.lastName || ''}</strong></div>}
+              <p className="rakie-guided-copy">Choose a date, then pick an available time. We’ll show only times that work for the selected services.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setGuidedStep(2); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="px-4 py-2 rounded border border-blue-300 bg-white text-blue-700 hover:bg-blue-50">← Back</button>
+                <button type="button" onClick={handleCancelBooking} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded">Cancel</button>
+              </div>
+            </div>
+          )}
+      <div className="rakie-calendar-row flex flex-row gap-4 items-start mt-4">
+      <div className="rakie-calendar-card border rounded shadow p-1 w-[300px] overflow-hidden">
           <FullCalendar
             key={`family-calendar-${activeBookingClientId || 'self'}-${activeFamilyBookingIndex}`}
             plugins={[dayGridPlugin, interactionPlugin]}
@@ -2156,6 +2748,27 @@ dayCellClassNames={({ date }) => {
         </div>
       </div>
 
+      {mode === 'create' && selectedDate && selectedTime && (
+        <div className="rakie-guided-actions mt-5">
+          <div className="rakie-selection-confirmation">
+            <span className="rakie-selection-check">✓</span>
+            <div>
+              <div className="font-semibold">{new Date(`${selectedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+              <div className="text-sm text-gray-600">{format24To12(selectedTime)}</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="rakie-primary-button rakie-guided-next"
+            onClick={() => { setGuidedStep(4); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+          >
+            Continue to review →
+          </button>
+        </div>
+      )}
+        </div>
+      )}
+
 
       {client?.welcomeOffer?.code === 'NEWCLIENT10' && client?.welcomeOffer?.status === 'available' && (
         <div className="mt-4 rounded border border-green-300 bg-green-50 p-3 text-green-800">
@@ -2164,9 +2777,104 @@ dayCellClassNames={({ date }) => {
         </div>
       )}
 
-      <div className="mt-4 border rounded bg-white p-3 space-y-2">
-        <div className="text-sm font-semibold">Coupon code optional</div>
-        <div className="flex flex-col sm:flex-row gap-2">
+      {(mode !== 'create' || guidedStep === 4) && (
+        <div className="rakie-review-wrap">
+          {mode === 'create' && familyFinalReviewRows?.length > 0 && (
+            <div className="rakie-guided-panel rakie-review-card rakie-family-final-review">
+              <div className="rakie-eyebrow">FINAL FAMILY REVIEW</div>
+              <h2 className="rakie-guided-title">Review everyone together</h2>
+              <p className="rakie-guided-copy">Nothing is sent until you press the final request button below.</p>
+              <div className="rakie-family-review-groups">
+                {selectedBookingClientIds.map((clientId) => {
+                  const person = familyBookingPeople.find((candidate) => String(candidate._id) === String(clientId));
+                  const rows = familyFinalReviewRows.filter((row) => String(row.clientId) === String(clientId));
+                  if (!rows.length) return null;
+                  return (
+                    <section key={clientId} className="rakie-family-review-person">
+                      <div className="rakie-family-review-person-head">
+                        <div>
+                          <div className="text-xs uppercase tracking-wide text-gray-500">Appointment for</div>
+                          <h3>{person?.firstName || 'Family member'} {person?.lastName || ''}</h3>
+                        </div>
+                        <button type="button" className="rakie-review-edit" onClick={() => {
+                          const index = selectedBookingClientIds.findIndex((id) => String(id) === String(clientId));
+                          if (index >= 0) {
+                            setFamilyFinalReviewRows(null);
+                            setActiveFamilyBookingIndex(index);
+                            restoreFamilyStepSelection(familyStepSelections[String(clientId)] || null, rows[0]?.date || null);
+                            setGuidedStep(4);
+                          }
+                        }}>Edit</button>
+                      </div>
+                      <div className="rakie-review-services">
+                        {rows.map((row, index) => (
+                          <div key={`${clientId}-${row.serviceId}-${index}`} className="rakie-review-service-line">
+                            <div>
+                              <strong>{row.service || 'Service'}</strong>
+                              <div className="text-xs text-gray-500">{row.duration || 0} min{row.time ? ` · ${format24To12(row.time)}` : ''}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rakie-review-details rakie-review-details-compact">
+                        <div className="rakie-review-appointment-tile">
+                          <strong>{rows[0]?.date ? new Date(`${rows[0].date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : '—'} · {format24To12(rows[0]?.time) || '—'}</strong>
+                          <span>Stylist: {familyStepSelections[String(clientId)]?.selectedWorker ? workerDisplayName(familyStepSelections[String(clientId)].selectedWorker) : '—'}</span>
+                        </div>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {mode === 'create' && !familyFinalReviewRows?.length && (
+            <div className="rakie-guided-panel rakie-review-card">
+              <div className="rakie-eyebrow">STEP 4 OF 4</div>
+              <h2 className="rakie-guided-title">Review and book your appointment</h2>
+              {selectedBookingClientIds.length > 1 && <div className="rakie-booking-for">Reviewing appointment for <strong>{activeBookingPerson?.firstName || 'family member'} {activeBookingPerson?.lastName || ''}</strong></div>}
+              <p className="rakie-guided-copy">Review this visit before continuing.</p>
+              <div className="rakie-review-services">
+                <div className="rakie-review-section-label">Services</div>
+                {(serviceBasket.length ? serviceBasket : [{ id: 'selected-service', service: selectedService, addOns: selectedAddOns || [] }]).map((item, index) => (
+                  <div key={item.id || index} className="rakie-review-service-line">
+                    <div className="min-w-0">
+                      <strong>{item.service?.name || 'Service'}</strong>
+                      <div className="text-xs text-gray-500">
+                        {basketItemDuration(item)} min
+                        {(item.addOns || []).length ? ` · Add-ons: ${(item.addOns || []).map((addOn) => addOn.name).join(', ')}` : ''}
+                      </div>
+                    </div>
+                    <div className="rakie-review-line-actions">
+                      <button
+                        type="button"
+                        className="rakie-review-edit"
+                        onClick={() => {
+                          setGuidedStep(2);
+                          beginEditBasketItem(item);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      {serviceBasket.length > 0 && (
+                        <button type="button" className="rakie-review-remove" onClick={() => { removeBasketItem(item.id); if (serviceBasket.length <= 1) setGuidedStep(2); }}>Remove</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="rakie-review-details rakie-review-details-compact">
+                <div className="rakie-review-appointment-tile">
+                  <strong>{selectedDate ? new Date(`${selectedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : '—'} · {format24To12(selectedTime) || '—'}</strong>
+                  <span>{selectedWorker ? `Stylist: ${workerDisplayName(selectedWorker)}` : 'Stylist: —'}</span>
+                </div>
+              </div>
+              <button type="button" className="rakie-review-edit" onClick={() => setGuidedStep(3)}>Change date or time</button>
+            </div>
+          )}
+      <details className="rakie-coupon-card mt-4 border rounded bg-white p-3 space-y-2">
+        <summary className="cursor-pointer text-sm font-semibold">Have a coupon?</summary>
+        <div className="mt-3 flex flex-col sm:flex-row gap-2">
           <input
             value={couponCode}
             onChange={(e) => {
@@ -2196,54 +2904,61 @@ dayCellClassNames={({ date }) => {
             {couponResult.error}
           </div>
         )}
-      </div>
+      </details>
 
-<div className="mt-4 flex flex-wrap justify-center gap-3">
-  {!bookingCompleteNotice && mode === 'create' && selectedBookingClientIds.length > 1 && activeFamilyBookingIndex > 0 && (
+<div className="rakie-final-actions mt-4 flex flex-wrap justify-center gap-3">
+  {!bookingCompleteNotice && mode === 'create' && (
     <button
       type="button"
-      onClick={goToPreviousFamilyMember}
+      onClick={() => {
+        if (familyFinalReviewRows?.length) {
+          const lastIndex = Math.max(0, selectedBookingClientIds.length - 1);
+          const lastId = String(selectedBookingClientIds[lastIndex] || '');
+          setFamilyFinalReviewRows(null);
+          setActiveFamilyBookingIndex(lastIndex);
+          restoreFamilyStepSelection(familyStepSelections[lastId] || null, firstFamilyBookingBlock?.date || null);
+          setGuidedStep(4);
+        } else if (selectedBookingClientIds.length > 1 && activeFamilyBookingIndex > 0) {
+          goToPreviousFamilyMember();
+        } else {
+          setGuidedStep(3);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }}
       disabled={isSubmitting}
       className="px-5 py-2 rounded border border-blue-300 bg-white text-blue-700 hover:bg-blue-50 disabled:opacity-60"
     >
-      ← Back to Previous Client
+      ← Back
     </button>
   )}
 
   {!bookingCompleteNotice && (
-  <button onClick={handleSubmit} disabled={!canSubmit || isSubmitting}
-  className={`px-6 py-2 rounded text-white ${(!canSubmit || isSubmitting) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
+  <button
+    onClick={handleSubmit}
+    disabled={isSubmitting || (!(mode === 'create' && familyFinalReviewRows?.length) && !canSubmit)}
+    className={`rakie-primary-button px-6 py-2 rounded text-white ${(isSubmitting || (!(mode === 'create' && familyFinalReviewRows?.length) && !canSubmit)) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+  >
   
     {mode === 'edit' ? 'Update Appointment'
       : mode === 'rebook' ? 'Rebook'
+      : mode === 'create' && familyFinalReviewRows?.length ? 'Request Family Appointments'
       : mode === 'create' && selectedBookingClientIds.length > 1 && activeFamilyBookingIndex < selectedBookingClientIds.length - 1 ? 'Save & Continue to Next Person'
-      : mode === 'create' && selectedBookingClientIds.length > 1 ? 'Book Family Appointments'
-      : mode === 'create' && serviceBasket.length > 1 ? 'Book Services' : 'Book Appointment'}
+      : mode === 'create' && selectedBookingClientIds.length > 1 ? 'Review All Family Appointments'
+      : mode === 'create' ? 'Request Appointment' : 'Book Appointment'}
   </button>
   )}
 
   {!bookingCompleteNotice && (
   <button
-    onClick={() => {
-      // Cancel semantics differ by mode
-      if (mode === 'edit') {
-        sessionStorage.removeItem('editingAppointment');
-        window.location.href = '/booking/dashboard';
-      } else if (mode === 'rebook') {
-        sessionStorage.removeItem('rebookAppointment');
-        window.history.length > 1 ? window.history.back() : (window.location.href = '/booking');
-      } else {
-        // create flow
-        clearOnlineBookingCount();
-        window.history.length > 1 ? window.history.back() : (window.location.href = '/booking');
-      }
-    }}
+    onClick={handleCancelBooking}
     className="px-6 py-2 bg-gray-200 hover:bg-gray-300 rounded"
   >
     Cancel
   </button>
   )}
 </div>
+        </div>
+      )}
 
 
       {showFamilyScheduleHub && effectiveClient && (
@@ -2257,6 +2972,7 @@ dayCellClassNames={({ date }) => {
               setActiveFamilyBookingIndex(0);
               setFamilyBookingDrafts([]);
               setFamilyStepSelections({});
+              setGuidedStep(1);
               setShowFamilyBookingPanel(true);
             }
             setShowFamilyScheduleHub(false);

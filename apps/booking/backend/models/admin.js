@@ -19,6 +19,8 @@ const adminSchema = new mongoose.Schema({
   credentialLastDeliveryChannel: { type: String, default: '' },
   credentialLastDeliveryError: { type: String, default: '' },
   lastLoginAt: { type: Date, default: null },
+  failedLoginAttempts: { type: Number, default: 0 },
+  lockUntil: { type: Date, default: null },
 }, { timestamps: true });
 
 adminSchema.pre('validate', function normalizeAdmin(next) {

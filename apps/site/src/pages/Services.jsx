@@ -306,11 +306,9 @@ export default function Services() {
           className="text-4xl md:text-5xl tracking-wide text-gray-900"
           style={{ fontFamily: '"Playfair Display", serif' }}
         >
-          Rakie&apos;s Menu
+          Rakie Salon Service Menu
         </h1>
-        <p className="mt-1 text-xs uppercase tracking-[0.25em] text-gray-500">
-          Service Menu
-        </p>
+
         <div className="mt-4 mx-auto h-[2px] w-40 bg-gradient-to-r from-transparent via-gray-400 to-transparent" />
         <div className="mx-auto mt-5 max-w-3xl rounded-xl border-2 border-amber-400 bg-amber-50 px-5 py-4 text-left text-sm text-amber-950 shadow-sm">
           <div className="font-bold uppercase tracking-wide">Important pricing notice</div>
@@ -358,7 +356,7 @@ export default function Services() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search service or category…"
+              placeholder="Search by service or category…"
               className="w-full rounded-xl border border-gray-300 bg-white px-4 py-2 pr-10 shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-900/20"
             />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-60">
@@ -417,9 +415,7 @@ export default function Services() {
                   >
                     {category}
                   </span>
-                  <span className="text-[10px] uppercase tracking-widest text-gray-500">
-                    Rakie Menu
-                  </span>
+
                 </div>
               </div>
 
@@ -427,8 +423,7 @@ export default function Services() {
                 {[...items].sort(itemComparator).map((s) => {
                   const id = s._id || s.slug || slugify(s.name);
                   const price = formatPrice(s.priceCents, s.price);
-                  const andUp =
-                    (s.label && /and\s*up/i.test(String(s.label))) || s.and_up;
+
                   const specialDeal = getDealForService(s, deals);
 
                   return (
@@ -446,7 +441,7 @@ export default function Services() {
                           href={`/booking?service=${encodeURIComponent(id)}`}
                           className="inline-flex items-center rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white opacity-0 shadow-sm transition-opacity hover:brightness-110 group-hover:opacity-100"
                         >
-                          Schedule
+                          Book Now
                         </a>
                       </span>
 
@@ -471,10 +466,8 @@ export default function Services() {
                           }`}
                         >
                           <span className="mr-1 text-xs font-medium text-gray-500">Starting from</span>
-                          {price}
-                          {andUp ? (
-                            <span className="ml-1 text-xs text-gray-500">and up</span>
-                          ) : null}
+                          Starting from {price}
+
                         </span>
                       </div>
 

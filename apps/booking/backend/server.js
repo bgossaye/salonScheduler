@@ -159,6 +159,10 @@ const allowedOrigins = toOriginArray(process.env.ALLOWED_ORIGINS || [
   "http://localhost:3000",
   "http://localhost:3001"
 ]);
+
+if (process.env.DEV_ALLOWED_ORIGIN) {
+  allowedOrigins.push(process.env.DEV_ALLOWED_ORIGIN);
+}
 const allowedOriginSet = new Set(allowedOrigins);
 
 // Handy local checks
@@ -166,6 +170,16 @@ const isLocal = (o) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o || '');
 
 console.log('[CORS] allowedOrigins:', allowedOrigins);
+
+// Helmet must run before any route or static middleware — previously it was
+// registered after `/uploads` static serving, which meant files served from
+// there (including client-uploaded photos) had none of helmet's protective
+// headers (e.g. X-Content-Type-Options: nosniff). That mattered specifically
+// because the upload endpoint accepts any file type — see the multer limits
+// added in routes/admin/clients.js.
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 app.use(cors({
   origin(origin, cb) {
@@ -348,6 +362,32 @@ if (hasSiteBuild) {
     });
   });
 }
+
+// ─────────────────────────────────────────────────────────────
+// Global error handler — catches anything that reaches next(err),
+// including errors thrown in async route handlers that forward to next(),
+// and errors from middleware like multer (e.g. file-too-large, wrong file
+// type on the upload endpoint). Without this, an uncaught error in a route
+// left the request hanging with no response instead of failing cleanly.
+// Must be the LAST app.use() — Express identifies error handlers by arity
+// (4 args), and order determines that this only runs after every route
+// above has had a chance to handle the request.
+// ─────────────────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  // console.error is patched by installSystemErrorCapture() above, so this
+  // also lands in the existing SystemErrorLog / admin error dashboard —
+  // no separate logging path needed.
+  console.error(`[unhandled] ${req.method} ${req.originalUrl}:`, err);
+
+  const status = Number(err?.status || err?.statusCode) || (err?.name === 'MulterError' ? 400 : 500);
+  const message = status < 500
+    ? (err?.message || 'Bad request')
+    : 'Something went wrong on our end. Please try again.';
+
+  res.status(status).json({ error: message });
+});
 
 // ✅ Server start
 const PORT = process.env.PORT || 5000;

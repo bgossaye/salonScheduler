@@ -106,6 +106,9 @@ async function hydrateAdminSession(adminDoc) {
   };
 }
 
+const LOCKOUT_MAX_FAILED_ATTEMPTS = Number(process.env.ADMIN_LOCKOUT_MAX_ATTEMPTS || 5);
+const LOCKOUT_DURATION_MINUTES = Number(process.env.ADMIN_LOCKOUT_MINUTES || 15);
+
 exports.login = async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const { password } = req.body;
@@ -118,11 +121,33 @@ exports.login = async (req, res) => {
       ],
     });
 
+    // Don't reveal whether the account exists; same generic message either way.
     if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
     if (admin.status === 'disabled') return res.status(403).json({ error: 'This staff account is disabled.' });
 
+    // Per-account lockout: independent of the IP-based rate limiter on the
+    // route, this stops repeated attempts against one account even if an
+    // attacker spreads requests across many IPs.
+    if (admin.lockUntil && admin.lockUntil > new Date()) {
+      const retryAfterSeconds = Math.ceil((admin.lockUntil.getTime() - Date.now()) / 1000);
+      res.set('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        error: `Too many failed login attempts. Try again in ${Math.ceil(retryAfterSeconds / 60)} minute(s).`,
+        code: 'ACCOUNT_LOCKED',
+        retryAfterSeconds,
+      });
+    }
+
     const isMatch = await bcrypt.compare(password || '', admin.password);
-    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!isMatch) {
+      admin.failedLoginAttempts = (admin.failedLoginAttempts || 0) + 1;
+      if (admin.failedLoginAttempts >= LOCKOUT_MAX_FAILED_ATTEMPTS) {
+        admin.lockUntil = new Date(Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000);
+        admin.failedLoginAttempts = 0;
+      }
+      await admin.save();
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     if (admin.workerId) {
       const worker = await Worker.findById(admin.workerId).lean();
@@ -133,6 +158,8 @@ exports.login = async (req, res) => {
 
     admin.status = admin.status || 'active';
     admin.lastLoginAt = new Date();
+    admin.failedLoginAttempts = 0;
+    admin.lockUntil = null;
     await admin.save();
 
     res.json(await hydrateAdminSession(admin));

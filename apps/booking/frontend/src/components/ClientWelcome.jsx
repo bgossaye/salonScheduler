@@ -298,9 +298,12 @@ export default function ClientWelcome({ client, onClientLoaded }) {
   const isExisting = !!exists;
 
   return (
-    <div className="min-h-screen flex flex-col justify-center items-center bg-gray-100 p-4">
+    <div className="rakie-welcome min-h-screen flex flex-col justify-center items-center bg-gray-100 p-4">
       <a href="https://rakiesalon.com/booking/admin/login">
-        <img src={logo} alt="Rakie Salon Logo" className="w-24 h-24 mb-4" />
+        <img src={logo} alt="Rakie Salon Logo" className="rakie-welcome-logo w-24 h-24 mb-4" />
+      </a>
+      <a href={`${window.location.origin}/`} className="rakie-welcome-home-link rakie-text-link">
+        Main Site
       </a>
 
       {bookingStatus.currentNotices.some((notice) => notice.onlineBookingOff) && (
@@ -320,8 +323,9 @@ export default function ClientWelcome({ client, onClientLoaded }) {
         </div>
       )}
 
-      <div className="bg-white shadow-md rounded p-6 w-full max-w-md">
+      <div className="rakie-welcome-card bg-white shadow-md rounded p-6 w-full max-w-md">
         <h1 className="text-xl font-semibold mb-4 text-center">Welcome to Rakie Salon</h1>
+        <p className="rakie-welcome-subtitle">Your beauty, your time — beautifully arranged.</p>
 
         <label className="block mb-2 text-sm font-medium text-gray-700">Enter your phone number:</label>
         <div className="relative">
@@ -373,7 +377,7 @@ export default function ClientWelcome({ client, onClientLoaded }) {
         <button
           onClick={handleSubmit}
           disabled={isLoading || !bookingStatus.bookingAvailable}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-2 rounded"
+          className="rakie-primary-button w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-2 rounded"
         >
           {isLoading ? (
             <div className="flex items-center justify-center gap-2">
@@ -405,15 +409,27 @@ export default function ClientWelcome({ client, onClientLoaded }) {
       {showIntake && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto relative">
+            {intakeConfig.verify && intakeConfig.otpMode === 'signup' && (
+              <button
+                type="button"
+                onClick={handleCancelFromIntake}
+                className="absolute top-3 left-3 z-10 min-h-[44px] min-w-[74px] px-4 inline-flex items-center justify-center rounded-full border border-gray-200 bg-white/95 shadow-sm text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:shadow active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition"
+                aria-label="Back"
+              >
+                Back
+              </button>
+            )}
+
             <button
+              type="button"
               onClick={() => setShowIntake(false)}
-              className="absolute top-3 right-3 text-sm text-gray-500 hover:underline"
+              className="absolute top-3 right-3 z-10 min-h-[44px] min-w-[74px] px-4 inline-flex items-center justify-center rounded-full border border-gray-200 bg-white/95 shadow-sm text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:shadow active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition"
               aria-label="Close"
             >
               Close
             </button>
 
-            <div className="p-4 pb-24">
+            <div className="p-4 pt-16 pb-24">
               <ClientIntakeForm
                 key={`${intakeConfig.verify}-${intakeConfig.otpMode}-${intakeConfig.setPin}-${phone}`}
                 embed

@@ -343,7 +343,9 @@ exports.getClientAppointments = async (req, res) => {
       .populate('serviceId')
       .populate('workerId')
       .populate('addOns')
-      .sort({ date: 1, time: 1 })
+      // Return the most recent appointments first so the history limit cannot
+      // hide a client's current/future appointment behind older records.
+      .sort({ date: -1, time: -1 })
       .limit(max)
       .lean();
 
@@ -357,6 +359,64 @@ exports.getClientAppointments = async (req, res) => {
 exports.getAppointmentsForClient = async (req, res) => {
   req.query = { ...(req.query || {}), clientId: req.params.id };
   return exports.getClientAppointments(req, res);
+};
+
+exports.getClientAppointmentCapacity = async (req, res) => {
+  try {
+    const targetClientId = String(req.params.id || '').trim();
+    if (!targetClientId) return res.status(400).json({ error: 'Client id is required' });
+
+    if (!(await clientAccessForTarget(req, targetClientId, 'view'))) {
+      return res.status(403).json({ error: 'You do not have permission to view these appointments.', code: 'CLIENT_APPOINTMENT_ACCESS_DENIED' });
+    }
+
+    const appointments = await Appointment.find(activeOnlineAppointmentQuery(targetClientId))
+      .populate('clientId')
+      .populate('serviceId')
+      .populate('workerId')
+      .populate('addOns')
+      .sort({ date: 1, time: 1 })
+      .lean();
+
+    const actorId = String(req.client?.id || '').trim();
+    let familyLink = null;
+    let guardianManagedMinor = false;
+
+    if (actorId && actorId !== targetClientId) {
+      const owner = await Client.findById(actorId).select('familyLinks').lean();
+      familyLink = (owner?.familyLinks || []).find((item) =>
+        String(item.clientId || '') === targetClientId && String(item.status || 'active') === 'active'
+      ) || null;
+
+      const target = await Client.findById(targetClientId).select('profileType guardianClientId').lean();
+      guardianManagedMinor = target?.profileType === 'minor_dependent' &&
+        String(target?.guardianClientId || '') === actorId;
+    }
+
+    const activeAppointments = (appointments || []).map((appointment) => {
+      const selfManaged = actorId === targetClientId;
+      const bookedByActor = !!appointment?.bookedByClientId && String(appointment.bookedByClientId) === actorId;
+      const explicitFamilyManage = familyLink?.permissions?.canCancel === true;
+      const canManage = selfManaged || bookedByActor || guardianManagedMinor || explicitFamilyManage;
+      return {
+        ...appointment,
+        canEditAppointment: canManage,
+        canCancelAppointment: canManage,
+      };
+    });
+
+    const activeAppointmentCount = activeAppointments.length;
+    return res.json({
+      clientId: targetClientId,
+      activeAppointments,
+      activeAppointmentCount,
+      maxActiveAppointments: MAX_ONLINE_ACTIVE_APPOINTMENTS_PER_CLIENT,
+      canCreate: activeAppointmentCount < MAX_ONLINE_ACTIVE_APPOINTMENTS_PER_CLIENT,
+    });
+  } catch (err) {
+    console.error('❌ public getClientAppointmentCapacity failed:', err?.message || err);
+    return res.status(500).json({ error: 'Server error' });
+  }
 };
 
 exports.createAppointment = async (req, res) => {

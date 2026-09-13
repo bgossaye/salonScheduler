@@ -1,48 +1,259 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
-    <script src="%PUBLIC_URL%/env.js"></script>
-
-<meta name="theme-color" content="#111827" />
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
-<!-- iOS PWA (still needed on iPhone/iPad Safari) -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-
-<!-- Android/Chrome PWA (silences the warning) -->
-<meta name="mobile-web-app-capable" content="yes">
-
-<!-- Recommended PWA extras -->
-<link rel="manifest" href="%PUBLIC_URL%/app-manifest.json" />
-<meta name="theme-color" content="#111827">
-
     <meta charset="utf-8" />
 
+    <!--
+      PRE-REACT RECOVERY LAYER
+      Runs before the generated React bundle, so a missing/stale main.*.js can
+      still be detected and recovered instead of leaving a permanent white page.
+    -->
+    <script>
+      (function () {
+        var RECOVERY_VERSION = '20260908-v4';
+        var RECOVERY_KEY = 'rakie-booking-recovery-' + RECOVERY_VERSION;
+        var LEGACY_SW_KEY = 'rakie-booking-legacy-sw-cleanup-' + RECOVERY_VERSION;
+        var recoveryInProgress = false;
+
+        function storageGet(storage, key) {
+          try { return storage.getItem(key); } catch (_) { return null; }
+        }
+        function storageSet(storage, key, value) {
+          try { storage.setItem(key, value); } catch (_) {}
+        }
+
+        // Runtime config is inline so env.js cannot become a stale boot dependency.
+        var host = window.location.hostname;
+        var isLocal =
+          host === 'localhost' ||
+          host === '127.0.0.1' ||
+          host === '0.0.0.0' ||
+          host.endsWith('.local') ||
+          host.startsWith('192.168.') ||
+          host.startsWith('10.');
+
+        window.__ENV = {
+          API_BASE: isLocal ? ('http://' + host + ':5000') : 'https://rakie-backend.onrender.com',
+          BASENAME: '/booking'
+        };
+
+        function showRecovery(message, terminal) {
+          function render() {
+            var box = document.getElementById('rakie-boot-recovery');
+            if (!box) return;
+            box.style.display = 'flex';
+            var text = document.getElementById('rakie-boot-message');
+            if (text) text.textContent = message || 'Rakie Salon Booking is updatingâ€¦';
+            var actions = document.getElementById('rakie-boot-actions');
+            if (actions) actions.style.display = terminal ? 'flex' : 'none';
+          }
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', render, { once: true });
+          } else {
+            render();
+          }
+        }
+
+        async function refreshLegacyWebState() {
+          // Preserve the marketing-site PWA. Ask existing registrations to update
+          // so the current root worker (which explicitly ignores /booking) takes over.
+          if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+            var registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map(function (registration) {
+              try {
+                return registration.update();
+              } catch (_) {
+                return Promise.resolve();
+              }
+            }));
+          }
+
+          // Only clear CacheStorage names owned by the booking application.
+          if ('caches' in window) {
+            var keys = await caches.keys();
+            await Promise.all(keys.filter(function (key) {
+              return key.indexOf('rakie-booking-') === 0;
+            }).map(function (key) { return caches.delete(key); }));
+          }
+        }
+
+        async function recover(reason) {
+          if (recoveryInProgress) return;
+          recoveryInProgress = true;
+
+          var alreadyTried = storageGet(sessionStorage, RECOVERY_KEY) === '1';
+          if (alreadyTried) {
+            showRecovery('We could not load the booking page. Please reload booking or call Rakie Salon.', true);
+            return;
+          }
+
+          storageSet(sessionStorage, RECOVERY_KEY, '1');
+          showRecovery('Rakie Salon Booking is updating. Reloading the newest versionâ€¦', false);
+
+          try {
+            await refreshLegacyWebState();
+          } catch (error) {
+            console.error('[Rakie Booking] Recovery cleanup failed', error);
+          }
+
+          console.warn('[Rakie Booking] Recovering before React boot:', reason);
+          var url = new URL(window.location.href);
+          url.searchParams.set('_rakie_refresh', String(Date.now()));
+          window.location.replace(url.toString());
+        }
+
+        // Catch the generated main JS or CSS file failing to load.
+        window.addEventListener('error', function (event) {
+          var target = event.target;
+          var failedScript = target && target.tagName === 'SCRIPT' && target.src;
+          var failedStylesheet =
+            target &&
+            target.tagName === 'LINK' &&
+            String(target.rel || '').toLowerCase() === 'stylesheet' &&
+            target.href;
+
+          if (failedScript || failedStylesheet) recover('asset-load-error');
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason;
+          var text = String((reason && reason.message) || reason || '');
+          if (/ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed/i.test(text)) {
+            recover('chunk-load-error');
+          }
+        });
+
+        // A proxy/server can occasionally return HTTP 200 + HTML for a CSS URL.
+        // Some browsers do not raise the normal <link> error event in that case.
+        // Verify the generated booking stylesheet actually became a CSSStyleSheet.
+        window.addEventListener('load', function () {
+          window.setTimeout(function () {
+            try {
+              var styles = Array.prototype.slice.call(
+                document.querySelectorAll('link[rel="stylesheet"]')
+              ).filter(function (link) {
+                var href = String(link.href || '');
+                return href.indexOf('/booking/static/css/') !== -1;
+              });
+
+              if (!styles.length) return;
+
+              var invalid = styles.some(function (link) {
+                if (!link.sheet) return true;
+                try {
+                  // Access is same-origin for the booking build. Reading cssRules
+                  // also catches a stylesheet object that never parsed valid CSS.
+                  return link.sheet.cssRules && link.sheet.cssRules.length === 0;
+                } catch (_) {
+                  return false;
+                }
+              });
+
+              if (invalid) recover('stylesheet-invalid-or-unavailable');
+            } catch (error) {
+              console.warn('[Rakie Booking] Stylesheet health check skipped', error);
+            }
+          }, 500);
+        });
+
+        // One-time migration for customers who still have an older root-scoped
+        // Rakie service worker. This does NOT clear localStorage/client profiles.
+        window.addEventListener('load', function () {
+          if (storageGet(localStorage, LEGACY_SW_KEY) === '1') return;
+          refreshLegacyWebState()
+            .then(function () { storageSet(localStorage, LEGACY_SW_KEY, '1'); })
+            .catch(function (error) {
+              console.error('[Rakie Booking] Legacy cache cleanup failed', error);
+            });
+        });
+
+        // If React never mounts and the browser did not surface an asset error,
+        // replace the blank root with a customer-facing fallback.
+        window.setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && root.childElementCount === 0) {
+            showRecovery('We could not load the booking page. Please reload booking or call Rakie Salon.', true);
+          }
+        }, 5000);
+
+        window.__rakieBookingRecover = recover;
+      })();
+    </script>
+
+    <meta name="theme-color" content="#111827" />
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="%PUBLIC_URL%/app-manifest.json" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Rakie Salon, by Rakeb Online Booking System" />
-    <title>Rakie Salon, by Rakeb – Haircuts, Color & Style in Lilburn, GA</title>
-    <meta name="description" content="Rakie Salon by Rakeb, offers professional haircuts, coloring, treatments, and styling in Lilburn, Georgia. Book your appointment online today!" />
+    <title>Rakie Salon, by Rakeb â€“ Haircuts, Color & Style in Lilburn, GA</title>
     <meta name="keywords" content="Rakie Salon, Lilburn hair salon, haircuts, hair color, hair treatment, Georgia salon, women haircut, online booking" />
     <meta name="author" content="Rakie Salon" />
-    <meta property="og:title" content="Rakie Salon by Rakeb, – Professional Hair & Beauty in Lilburn, GA" />
-    <meta property="og:description" content="Book your hair appointment online at Rakie Salon by Rakeb,. Serving Lilburn, Stone Mountain, and surrounding areas." />
+    <meta property="og:title" content="Rakie Salon by Rakeb â€“ Professional Hair & Beauty in Lilburn, GA" />
+    <meta property="og:description" content="Book your hair appointment online at Rakie Salon by Rakeb. Serving Lilburn, Stone Mountain, and surrounding areas." />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://rakiesalon.com/home.html" />
-    <meta property="og:image" content="https://rakiesalon.com/booking/logo192.png" />
+    <meta property="og:url" content="https://rakiesalon.com/booking/" />
+    <meta property="og:image" content="https://rakiesalon.com/booking/icon192.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Rakie Salon by Rakeb, – Hair & Style Experts in Lilburn" />
-    <meta name="twitter:description" content="Professional salon by Rakeb, services in Lilburn, GA. Book online now." />
-    <meta name="twitter:image" content="https://rakiesalon.com/booking/logo192.png" />
+    <meta name="twitter:title" content="Rakie Salon by Rakeb â€“ Hair & Style Experts in Lilburn" />
+    <meta name="twitter:description" content="Professional salon services in Lilburn, GA. Book online now." />
+    <meta name="twitter:image" content="https://rakiesalon.com/booking/icon192.png" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/icon192.png" />
 
-    <!-- Apple Touch Icon -->
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-
-    <title>Rakie Salon Booking</title>
+    <style>
+      #rakie-boot-recovery {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #ffffff;
+        color: #111827;
+        font-family: Arial, Helvetica, sans-serif;
+        text-align: center;
+      }
+      #rakie-boot-recovery .rakie-card {
+        width: min(460px, 100%);
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 12px 35px rgba(0,0,0,.08);
+      }
+      #rakie-boot-recovery h1 { margin: 0 0 12px; font-size: 24px; }
+      #rakie-boot-recovery p { margin: 0; line-height: 1.5; color: #4b5563; }
+      #rakie-boot-actions { display: none; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
+      #rakie-boot-actions a, #rakie-boot-actions button {
+        border: 1px solid #111827;
+        border-radius: 10px;
+        padding: 11px 16px;
+        background: #111827;
+        color: #fff;
+        font: inherit;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      #rakie-boot-actions a { background: #fff; color: #111827; }
+    </style>
 </head>
-  <body>
+<body>
     <noscript>You need to enable JavaScript to use Rakie Salon Booking.</noscript>
+
+    <div id="rakie-boot-recovery" role="alert" aria-live="assertive">
+      <div class="rakie-card">
+        <h1>Rakie Salon Booking</h1>
+        <p id="rakie-boot-message">Rakie Salon Booking is updatingâ€¦</p>
+        <div id="rakie-boot-actions">
+          <button type="button" onclick="window.location.reload()">Reload Booking</button>
+          <a href="tel:+16786153704">Call (678) 615-3704</a>
+        </div>
+      </div>
+    </div>
+
     <div id="root"></div>
-  </body>
+</body>
 </html>
+

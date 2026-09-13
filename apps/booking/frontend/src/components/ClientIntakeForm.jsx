@@ -515,15 +515,19 @@ export default function ClientIntakeForm({
 
       {step === 'verifyPin' && (
         <>
-          <h2 className="text-xl font-semibold mb-4">
-            {otpMode === 'reset' ? 'Verify your phone and set a new PIN' : 'Verify your phone'}
-          </h2>
-          <p className="text-gray-600 text-sm mb-4">
+          {otpMode === 'reset' ? (
+            <h2 className="text-xl font-semibold mb-4">Verify your phone and set a new PIN</h2>
+          ) : (
+            <div className="mb-4 text-center">
+              <h2 className="text-2xl font-semibold mb-1">Welcome</h2>
+              <p className="text-sm text-gray-600">To book, verify your phone number.</p>
+            </div>
+          )}
+          <p className="text-gray-600 text-sm mb-2">
             {otpMaskedPhone
               ? `We texted a 6-digit code to ${otpMaskedPhone}.`
               : 'We will text a 6-digit code to the phone number on file.'}
           </p>
-
           <label className="block font-medium mb-1">6-digit code</label>
           <input
             type="tel"
@@ -616,7 +620,7 @@ export default function ClientIntakeForm({
               onClick={handleVerifyAndSetPin}
               className="bg-blue-600 text-white px-4 py-2 rounded"
             >
-              {otpMode === 'reset' ? 'Verify & Set PIN' : 'Verify & Continue'}
+              {otpMode === 'reset' ? 'Verify & Set PIN' : 'Verify Code'}
             </button>
             <button
               type="button"

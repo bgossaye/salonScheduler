@@ -21,7 +21,7 @@ export default function AdminServices() {
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Are you sure?')) {
+    if (window.confirm('Delete this service?')) {
       await API.delete(`/admin/services/${id}`);
       fetchServices();
     }
@@ -124,10 +124,10 @@ export default function AdminServices() {
           <tr className="bg-gray-100">
             <th className="p-2 border">Name</th>
             <th className="p-2 border">Category</th>
-            <th className="p-2 border">Legacy/Rakeb Price</th>
+            <th className="p-2 border">Rakeb Price</th>
             <th className="p-2 border">Starting Price</th>
             <th className="p-2 border">Duration</th>
-            <th className="p-2 border">Flags</th>
+            <th className="p-2 border">Status / Requirements</th>
             <th className="p-2 border">Steps</th>
             <th className="p-2 border">Add-ons</th>
             <th className="p-2 border">Actions</th>
@@ -139,7 +139,7 @@ export default function AdminServices() {
               <td className="p-2 border">{s.name}</td>
               <td className="p-2 border">{s.category}</td>
               <td className="p-2 border">${s.price}</td>
-              <td className="p-2 border">{s.startingPrice != null && s.startingPrice !== '' ? `$${s.startingPrice}` : 'Calculated by stylist'}</td>
+              <td className="p-2 border">{s.startingPrice != null && s.startingPrice !== '' ? `$${s.startingPrice}` : 'Varies by stylist'}</td>
               <td className="p-2 border">{s.duration} min</td>
               <td className="p-2 border text-xs">
                 {s.requiresChemicalPermission && <span className="inline-block rounded bg-purple-50 px-2 py-1 text-purple-700 border border-purple-200">Chemical</span>}

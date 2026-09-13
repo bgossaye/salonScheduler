@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../../controllers/admin/authadmincontroller');
 const auth = require('../../middleware/authmiddleware');
+const loginRateLimiter = require('../../middleware/loginRateLimiter');
 
-router.post('/', controller.login);
+router.post('/', loginRateLimiter, controller.login);
 router.get('/token-status', controller.tokenStatus);
 router.post('/accept-invite', controller.acceptInvite);
 router.post('/request-password-reset', controller.requestPasswordReset);
