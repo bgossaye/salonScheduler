@@ -794,6 +794,17 @@ useEffect(() => {
       const rows = Array.isArray(data) ? data : [];
       const mapped = rows.map((t) => {
         let available = t.status === 'free';
+        // Extra client-side guard: for today's date, never leave a past/current slot clickable
+        // even if an older/stale availability response was cached somewhere in the path.
+        if (available && selectedDate) {
+          const now = new Date();
+          const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          if (selectedDate === localToday) {
+            const slotMinutes = timeToMinutes(t.time);
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            if (slotMinutes <= currentMinutes) available = false;
+          }
+        }
         if (available && familyBookingDrafts.length > 0 && selectedDate && selectedWorker?._id) {
           const candidateStart = timeToMinutes(t.time);
           const candidateEnd = candidateStart + totalDuration;

@@ -5,6 +5,21 @@ const { resolveStoreCalendarStatus } = require('../utils/storeCalendar');
 const { resolveWorkerService, getDefaultWorker } = require('../utils/workerPricing');
 const { isActiveAppointmentStatus } = require('../utils/appointmentIntegrity');
 
+const SALON_TIME_ZONE = process.env.SALON_TIME_ZONE || 'America/New_York';
+
+function getSalonNowParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SALON_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((part) => part.type === type)?.value || '';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    minutes: (Number(get('hour')) * 60) + Number(get('minute')),
+  };
+}
+
 function normalizeTimeToMinutes(timeStr) {
   const ampmMatch = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?$/i);
   if (ampmMatch) {
@@ -156,12 +171,19 @@ exports.getAvailability = async (req, res) => {
 
     const blocks = approvedBlocksForDate(worker, date);
     const slots = [];
+    const salonNow = getSalonNowParts();
 
     for (let min = startMin; min < closeMin; min += 15) {
       const candidateEnd = min + duration;
       const visualEnd = min + 15;
       let status = candidateEnd <= closeMin ? 'free' : 'closed';
       let reason = '';
+
+      // Never offer a time that has already started today in the salon's timezone.
+      if (status === 'free' && String(date) === salonNow.date && min <= salonNow.minutes) {
+        status = 'past';
+        reason = 'This time has already passed';
+      }
       let isStart = false;
       let isEnd = false;
 

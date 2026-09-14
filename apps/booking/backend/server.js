@@ -59,6 +59,7 @@ cron.schedule(FAMILY_INVITATION_CLEANUP_CRON, cleanupExpiredFamilyInvitationToke
 console.log(`[family-invitation] Expired token cleanup scheduled: ${FAMILY_INVITATION_CLEANUP_CRON} (${REMINDER_TIMEZONE})`);
 
 const inbound = require('./routes/twilioInbound');
+const pendingBookingApprovalRoutes = require('./routes/pendingBookingApproval');
 
 async function sendDailyReminders() {
     const easternToday = new Intl.DateTimeFormat('en-CA', {
@@ -278,6 +279,7 @@ const publicWorkers = require('./routes/client/workers');
 
 // Use the route
 app.use('/api/clients', clientRoutes);
+app.use('/api/pending-booking-approval', pendingBookingApprovalRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/availability', availabilityRoutes);

@@ -121,6 +121,15 @@ export default function AdminRuntimeSettings() {
       .map((group) => [group, map[group]]);
   }, [settings]);
 
+  const pendingSmsSettings = useMemo(() => {
+    const byKey = new Map(settings.map((item) => [item.key, item]));
+    return {
+      enabled: byKey.get('booking.pendingAdminSms.enabled'),
+      recipients: byKey.get('booking.pendingAdminSms.recipients'),
+      tokenHours: byKey.get('booking.pendingAdminSms.tokenHours'),
+    };
+  }, [settings]);
+
   const updateLocalSetting = (key, value) => {
     setSettings((prev) => prev.map((item) => (
       item.key === key ? { ...item, value } : item
@@ -326,8 +335,69 @@ export default function AdminRuntimeSettings() {
 
                 {isOpen && (
                   <>
+                    {group === 'Booking Controls' && pendingSmsSettings.recipients && (
+                      <div className="m-4 rounded-xl border-2 border-blue-300 bg-blue-50 p-4">
+                        <div className="mb-4">
+                          <h4 className="text-lg font-bold text-blue-950">Pending Booking SMS Approval</h4>
+                          <p className="mt-1 text-sm text-blue-900">Choose exactly which authorized admin phone number(s) receive a text when a customer creates a pending online booking.</p>
+                        </div>
+
+                        <div className="space-y-4">
+                          {pendingSmsSettings.enabled && (
+                            <div className="rounded-lg border bg-white p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                              <div>
+                                <div className="font-semibold">Send pending-booking text alerts</div>
+                                <div className="text-sm text-gray-600">Turn SMS alerts to authorized admins on or off.</div>
+                              </div>
+                              {renderControl(pendingSmsSettings.enabled)}
+                            </div>
+                          )}
+
+                          <div className="rounded-lg border bg-white p-3">
+                            <label className="block font-semibold mb-1" htmlFor="pending-admin-sms-phones">Admin phone number(s) receiving the text</label>
+                            <p className="text-sm text-gray-600 mb-2">Enter one or more US phone numbers. Separate multiple numbers with commas. Example: 4045551212, 6785553434</p>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                id="pending-admin-sms-phones"
+                                type="text"
+                                inputMode="tel"
+                                className="border rounded p-2 flex-1"
+                                placeholder="4045551212"
+                                value={draftValues[pendingSmsSettings.recipients.key] ?? ''}
+                                onChange={(e) => setDraftValues((prev) => ({ ...prev, [pendingSmsSettings.recipients.key]: e.target.value }))}
+                              />
+                              <button
+                                type="button"
+                                className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-60"
+                                disabled={savingKey === pendingSmsSettings.recipients.key}
+                                onClick={() => saveSetting(pendingSmsSettings.recipients, draftValues[pendingSmsSettings.recipients.key])}
+                              >
+                                {savingKey === pendingSmsSettings.recipients.key ? 'Saving…' : 'Save phone(s)'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {pendingSmsSettings.tokenHours && (
+                            <div className="rounded-lg border bg-white p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                              <div>
+                                <div className="font-semibold">Approval link expiration</div>
+                                <div className="text-sm text-gray-600">Hours before the secure SMS review link expires.</div>
+                              </div>
+                              {renderControl(pendingSmsSettings.tokenHours)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="divide-y">
-                      {rows.map((setting) => (
+                      {rows
+                        .filter((setting) => ![
+                          'booking.pendingAdminSms.enabled',
+                          'booking.pendingAdminSms.recipients',
+                          'booking.pendingAdminSms.tokenHours',
+                        ].includes(setting.key))
+                        .map((setting) => (
                         <div key={setting.key} className="p-4 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 hover:bg-gray-50/70">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">

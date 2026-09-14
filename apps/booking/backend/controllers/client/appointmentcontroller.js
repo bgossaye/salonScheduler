@@ -7,6 +7,44 @@ const { resolvePromotionForAppointment } = require('../../utils/promotions');
 const { applyWorkerPricingToPayload, applyPromotionDiscountToPriceSnapshot } = require('../../utils/workerPricing');
 const { assertNoSlotConflicts, saveAppointmentsWithIntegrity } = require('../../utils/appointmentIntegrity');
 const { restoreWelcomeOfferForCanceledAppointment } = require('../../utils/welcomeOffer');
+const { notifyPendingBookingAdmins } = require('../../utils/pendingBookingAdminApproval');
+
+const SALON_TIME_ZONE = process.env.SALON_TIME_ZONE || 'America/New_York';
+
+function getSalonNowParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SALON_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((part) => part.type === type)?.value || '';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    minutes: (Number(get('hour')) * 60) + Number(get('minute')),
+  };
+}
+
+function appointmentTimeToMinutes(time) {
+  const match = String(time || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function assertAppointmentNotInPast(date, time) {
+  const salonNow = getSalonNowParts();
+  const appointmentDate = String(date || '').slice(0, 10);
+  const appointmentMinutes = appointmentTimeToMinutes(time);
+  if (!appointmentDate || appointmentMinutes === null) return;
+  if (appointmentDate < salonNow.date || (appointmentDate === salonNow.date && appointmentMinutes <= salonNow.minutes)) {
+    const err = new Error('That appointment time has already passed. Please choose a later time.');
+    err.status = 400;
+    err.code = 'APPOINTMENT_TIME_PASSED';
+    throw err;
+  }
+}
 
 function onlyDigits(value = '') {
   return String(value || '').replace(/\D/g, '');
@@ -441,6 +479,7 @@ exports.createAppointment = async (req, res) => {
     if (!clientId || !serviceId || !service || !date || !time) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    assertAppointmentNotInPast(date, time);
     if (!(await clientAccessForTarget(req, clientId, 'create'))) {
       return res.status(403).json({ error: 'You do not have permission to book for this client.', code: 'CLIENT_BOOKING_ACCESS_DENIED' });
     }
@@ -489,6 +528,11 @@ exports.createAppointment = async (req, res) => {
 
     res.status(201).json(saved);
     sendAppointmentSMS(saved.status === 'pending' ? 'pending' : 'confirmation', saved);
+    if (String(saved.status || '').toLowerCase() === 'pending') {
+      setImmediate(() => notifyPendingBookingAdmins(saved).catch((err) =>
+        console.error('[pending-booking] admin alert failed:', err?.message || err)
+      ));
+    }
   } catch (err) {
     console.error('❌ public createAppointment failed:', err?.message || err);
     return res.status(err.status || 500).json({
@@ -517,6 +561,7 @@ exports.createAppointmentBatch = async (req, res) => {
     const maxServicesPerClient = Math.min(configuredMax, 2);
 
     rows.forEach((row, index) => validatePublicAppointmentRow(row, index + 1));
+    rows.forEach((row) => assertAppointmentNotInPast(row.date, row.time));
 
     const distinctClientIds = Array.from(new Set(rows.map((row) => String(row.clientId || '').trim()).filter(Boolean)));
     const isFamilyBooking = distinctClientIds.length > 1;
@@ -632,6 +677,11 @@ exports.createAppointmentBatch = async (req, res) => {
 
     for (const saved of savedAppointments) {
       sendAppointmentSMS(saved.status === 'pending' ? 'pending' : 'confirmation', saved);
+      if (String(saved.status || '').toLowerCase() === 'pending') {
+        setImmediate(() => notifyPendingBookingAdmins(saved).catch((err) =>
+          console.error('[pending-booking] batch admin alert failed:', err?.message || err)
+        ));
+      }
     }
   } catch (err) {
     console.error('❌ public createAppointmentBatch failed:', err?.message || err);
@@ -665,6 +715,7 @@ exports.updateAppointment = async (req, res) => {
       merged = await preparePublicAppointmentPayload(merged);
     }
     if (patch.date || patch.time || patch.duration || patch.workerId || patch.serviceId) {
+      assertAppointmentNotInPast(merged.date, merged.time);
       await assertNoSlotConflicts([merged], { ignoreAppointmentIds: [id], publicMessage: true });
     }
 

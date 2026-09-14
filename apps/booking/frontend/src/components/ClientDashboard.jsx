@@ -291,7 +291,7 @@ export default function ClientDashboard({ client }) {
           >
             Logout
           </button>
-          <a href={`${window.location.origin}/`} className="rakie-text-link">
+          <a href={(process.env.NODE_ENV !== 'production' || ['localhost', '127.0.0.1'].includes(window.location.hostname)) ? `${window.location.protocol}//${window.location.hostname}:3000/` : 'https://rakiesalon.com/'} className="rakie-text-link">
             Main Site
           </a>
         </div>

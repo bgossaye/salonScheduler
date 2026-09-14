@@ -7,6 +7,7 @@ import ClientDashboard from './components/ClientDashboard';
 import ServiceSelector from './components/ServiceSelector';
 import ClientConfirmation from './pages/clientconfirmation';
 import FamilyInvitation from './pages/FamilyInvitation';
+import PendingBookingApproval from './pages/PendingBookingApproval';
 import AdminLogin from './components/admin/AdminLogin';
 import StaffPasswordSetup from './components/admin/StaffPasswordSetup';
 import AdminDashboard from './components/admin/AdminDashboard';
@@ -49,6 +50,7 @@ function App() {
 
   const location = useLocation();
   const isFamilyInvitationPage = location.pathname.startsWith('/family-invitation/') || location.pathname.startsWith('/booking/family-invitation/');
+  const isPendingBookingApprovalPage = location.pathname.startsWith('/approve/') || location.pathname.startsWith('/booking/approve/');
   const isClientExperience = ['/', '/schedule', '/dashboard', '/confirmation'].includes(location.pathname);
   const [client, setClient] = useState(null);
 
@@ -84,60 +86,110 @@ function App() {
 useEffect(() => { wakeRender({ tag: 'booking-root' }); }, []);
 
 useEffect(() => {
-  const mainSiteUrl = `${window.location.origin}/`;
+  const hostname = window.location.hostname;
+  const isDevelopment = process.env.NODE_ENV !== 'production'
+    || hostname === 'localhost'
+    || hostname === '127.0.0.1';
 
-  const updateMainSiteLink = () => {
-    const anchors = Array.from(document.querySelectorAll('a'));
-    const brandLink = anchors.find((anchor) => {
-      const text = (anchor.textContent || '').trim().replace(/\s+/g, ' ');
-      return text === 'Rakie Salon' || text === 'Rakie Salon Site';
-    });
+  // Main marketing site and booking app are separate dev servers, but share
+  // rakiesalon.com in production.
+  const mainSiteOrigin = isDevelopment
+    ? `${window.location.protocol}//${hostname}:3000`
+    : 'https://rakiesalon.com';
+  const bookingOrigin = isDevelopment
+    ? window.location.origin
+    : 'https://rakiesalon.com';
 
-    if (!brandLink) return false;
-
-    brandLink.setAttribute('href', mainSiteUrl);
-    brandLink.setAttribute('aria-label', 'Main Site');
-    brandLink.style.display = 'inline-flex';
-    brandLink.style.alignItems = 'center';
-    brandLink.style.justifyContent = 'flex-start';
-    brandLink.style.gap = '4px';
-
-    // Rebuild only the inside of the existing brand link so inherited
-    // margins/padding from the old brand text cannot separate logo and label.
-    brandLink.replaceChildren();
-
-    const brandLogo = document.createElement('img');
-    brandLogo.src = logo;
-    brandLogo.alt = '';
-    brandLogo.setAttribute('aria-hidden', 'true');
-    brandLogo.setAttribute('data-rakie-main-site-logo', 'true');
-    brandLogo.style.width = '22px';
-    brandLogo.style.height = '22px';
-    brandLogo.style.objectFit = 'contain';
-    brandLogo.style.display = 'block';
-    brandLogo.style.flex = '0 0 auto';
-    brandLogo.style.margin = '0';
-
-    const brandText = document.createElement('span');
-    brandText.textContent = 'Main Site';
-    brandText.style.margin = '0';
-    brandText.style.padding = '0';
-    brandText.style.display = 'inline-block';
-
-    brandLink.append(brandLogo, brandText);
-
-    return true;
+  const mainSiteRoutes = {
+    Home: '/',
+    Specials: '/specials',
+    About: '/about',
+    Policies: '/policies',
+    Careers: '/careers',
+    'All Services': '/services',
+    Contact: '/contact',
   };
 
-  if (updateMainSiteLink()) return undefined;
+  const setHrefIfNeeded = (anchor, href) => {
+    if (anchor.getAttribute('href') !== href) anchor.setAttribute('href', href);
+  };
 
-  const observer = new MutationObserver(() => {
-    if (updateMainSiteLink()) observer.disconnect();
-  });
+  const updateHeaderLinks = () => {
+    const anchors = Array.from(document.querySelectorAll('a'));
+
+    // Brand / Main Site link: preserve the shared Header shell and rebuild only
+    // the inside of its existing brand anchor.
+    const brandLink = anchors.find((anchor) => {
+      const text = (anchor.textContent || '').trim().replace(/\s+/g, ' ');
+      return text === 'Rakie Salon' || text === 'Rakie Salon Site' ||
+        (text === 'Main Site' && anchor.querySelector('[data-rakie-main-site-logo="true"]'));
+    });
+
+    if (brandLink) {
+      setHrefIfNeeded(brandLink, `${mainSiteOrigin}/`);
+      brandLink.setAttribute('aria-label', 'Main Site');
+      brandLink.style.display = 'inline-flex';
+      brandLink.style.alignItems = 'center';
+      brandLink.style.justifyContent = 'flex-start';
+      brandLink.style.gap = '4px';
+
+      if (!brandLink.querySelector('[data-rakie-main-site-logo="true"]')) {
+        brandLink.replaceChildren();
+
+        const brandLogo = document.createElement('img');
+        brandLogo.src = logo;
+        brandLogo.alt = '';
+        brandLogo.setAttribute('aria-hidden', 'true');
+        brandLogo.setAttribute('data-rakie-main-site-logo', 'true');
+        brandLogo.style.width = '22px';
+        brandLogo.style.height = '22px';
+        brandLogo.style.objectFit = 'contain';
+        brandLogo.style.display = 'block';
+        brandLogo.style.flex = '0 0 auto';
+        brandLogo.style.margin = '0';
+
+        const brandText = document.createElement('span');
+        brandText.textContent = 'Main Site';
+        brandText.style.margin = '0';
+        brandText.style.padding = '0';
+        brandText.style.display = 'inline-block';
+
+        brandLink.append(brandLogo, brandText);
+      }
+    }
+
+    // The hamburger/desktop Header navigation belongs to the marketing site.
+    // Only Book Now remains in the booking application.
+    anchors.forEach((anchor) => {
+      const inSharedHeader = Boolean(anchor.closest('header') || anchor.closest('nav[aria-label="Mobile"]'));
+      if (!inSharedHeader) return;
+      const label = (anchor.textContent || '').trim().replace(/\s+/g, ' ');
+      if (Object.prototype.hasOwnProperty.call(mainSiteRoutes, label)) {
+        setHrefIfNeeded(anchor, `${mainSiteOrigin}${mainSiteRoutes[label]}`);
+      } else if (label === 'Book Now') {
+        setHrefIfNeeded(anchor, `${bookingOrigin}/booking/`);
+      }
+    });
+  };
+
+  updateHeaderLinks();
+
+  // Shared Header can re-render when its hamburger opens/closes. Keep links
+  // corrected after those renders without changing the Header's layout.
+  const observer = new MutationObserver(updateHeaderLinks);
   observer.observe(document.body, { childList: true, subtree: true });
 
   return () => observer.disconnect();
 }, []);
+
+if (isPendingBookingApprovalPage) {
+  return (
+    <Routes>
+      <Route path="/approve/:token" element={<PendingBookingApproval />} />
+      <Route path="/booking/approve/:token" element={<PendingBookingApproval />} />
+    </Routes>
+  );
+}
 if (isFamilyInvitationPage) {
   return (
     <Routes>

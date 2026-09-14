@@ -302,7 +302,7 @@ export default function ClientWelcome({ client, onClientLoaded }) {
       <a href="https://rakiesalon.com/booking/admin/login">
         <img src={logo} alt="Rakie Salon Logo" className="rakie-welcome-logo w-24 h-24 mb-4" />
       </a>
-      <a href={`${window.location.origin}/`} className="rakie-welcome-home-link rakie-text-link">
+      <a href={(process.env.NODE_ENV !== 'production' || ['localhost', '127.0.0.1'].includes(window.location.hostname)) ? `${window.location.protocol}//${window.location.hostname}:3000/` : 'https://rakiesalon.com/'} className="rakie-welcome-home-link rakie-text-link">
         Main Site
       </a>
 
