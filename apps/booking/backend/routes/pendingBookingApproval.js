@@ -7,8 +7,8 @@ const {
 
 router.get('/:token', async (req, res) => {
   try {
-    const { summary } = await getAppointmentForApprovalToken(req.params.token);
-    return res.json({ appointment: summary });
+    const { summary, schedule } = await getAppointmentForApprovalToken(req.params.token);
+    return res.json({ appointment: summary, schedule });
   } catch (err) {
     return res.status(err.status || 500).json({
       error: err.status && err.status < 500 ? err.message : 'Unable to open approval link.',
@@ -20,7 +20,7 @@ router.get('/:token', async (req, res) => {
 
 router.post('/:token/confirm', async (req, res) => {
   try {
-    const { summary } = await confirmAppointmentWithToken(req.params.token);
+    const { summary } = await confirmAppointmentWithToken(req.params.token, req.body?.duration);
     return res.json({ ok: true, appointment: summary });
   } catch (err) {
     return res.status(err.status || 500).json({

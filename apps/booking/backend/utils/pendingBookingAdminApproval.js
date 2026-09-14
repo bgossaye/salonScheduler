@@ -149,7 +149,44 @@ function approvalSummary(appointment) {
     dateLabel: formatDate(appointment.date),
     time: appointment.time || '',
     timeLabel: formatTime(appointment.time),
+    duration: Math.max(1, Number(appointment.duration) || 60),
   };
+}
+
+function safeScheduleClientName(client) {
+  const first = String(client?.firstName || '').trim();
+  const last = String(client?.lastName || '').trim();
+  if (!first && !last) return 'Client';
+  return last ? `${first || 'Client'} ${last.charAt(0).toUpperCase()}.` : first;
+}
+
+async function loadDaySchedule(appointment) {
+  if (!appointment?.date) return [];
+  const workerId = appointment?.workerId?._id || appointment?.workerId || null;
+  const query = {
+    date: appointment.date,
+    archived: { $ne: true },
+    status: { $nin: ['canceled', 'cancelled', 'cancelation', 'cancellation'] },
+  };
+  if (workerId) query.workerId = workerId;
+  else query._id = appointment._id;
+
+  const rows = await Appointment.find(query)
+    .populate('clientId', 'firstName lastName')
+    .populate('serviceId', 'name')
+    .sort({ time: 1 })
+    .lean();
+
+  return rows.map((item) => ({
+    appointmentId: String(item._id || ''),
+    clientName: safeScheduleClientName(item.clientId),
+    serviceName: item?.serviceId?.name || item?.service || 'Service',
+    time: item.time || '',
+    timeLabel: formatTime(item.time),
+    duration: Math.max(1, Number(item.duration) || 60),
+    status: String(item.status || ''),
+    isTarget: String(item._id || '') === String(appointment._id || ''),
+  }));
 }
 
 async function sendRawSms(to, body) {
@@ -236,16 +273,29 @@ async function getAppointmentForApprovalToken(token) {
     err.code = 'APPOINTMENT_NOT_FOUND';
     throw err;
   }
-  return { appointment, summary: approvalSummary(appointment), payload };
+  const schedule = await loadDaySchedule(appointment);
+  return { appointment, summary: approvalSummary(appointment), schedule, payload };
 }
 
-async function confirmAppointmentWithToken(token) {
+async function confirmAppointmentWithToken(token, requestedDuration) {
   const payload = verifyApprovalToken(token);
+  let durationPatch = null;
+  if (requestedDuration !== undefined && requestedDuration !== null && requestedDuration !== '') {
+    const parsed = Number(requestedDuration);
+    if (!Number.isInteger(parsed) || parsed < 15 || parsed > 720) {
+      const err = new Error('Duration must be between 15 and 720 minutes.');
+      err.status = 400;
+      err.code = 'INVALID_DURATION';
+      throw err;
+    }
+    durationPatch = parsed;
+  }
   const updated = await Appointment.findOneAndUpdate(
     { _id: payload.appointmentId, status: 'pending' },
     {
       $set: {
         status: 'booked',
+        ...(durationPatch ? { duration: durationPatch } : {}),
         requiresReceivingStylistConfirmation: false,
         receivingStylistConfirmationStatus: 'accepted',
       },

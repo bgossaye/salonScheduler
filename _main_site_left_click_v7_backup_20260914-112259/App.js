@@ -172,56 +172,14 @@ useEffect(() => {
     });
   };
 
-  // RAKIE_V7_FORCE_MAIN_SITE_LEFT_CLICK
-  // The shared Header uses react-router Link/NavLink. Inside the booking app,
-  // React Router can intercept a normal left-click and prepend /booking even
-  // after v5 corrected the anchor href. Capture main-site clicks before the
-  // router sees them and hand those clicks directly to the browser.
-  const forceMainSiteLeftClick = (event) => {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-
-    const eventTarget = event.target;
-    const anchor = eventTarget && typeof eventTarget.closest === 'function'
-      ? eventTarget.closest('a')
-      : null;
-    if (!anchor) return;
-
-    const inSharedHeader = Boolean(anchor.closest('header') || anchor.closest('nav[aria-label="Mobile"]'));
-    if (!inSharedHeader) return;
-
-    const label = (anchor.textContent || '').trim().replace(/\s+/g, ' ');
-    const isBrandMainSite = anchor.getAttribute('aria-label') === 'Main Site'
-      || label === 'Main Site'
-      || label === 'Rakie Salon'
-      || label === 'Rakie Salon Site';
-
-    let route = null;
-    if (isBrandMainSite) {
-      route = '/';
-    } else if (Object.prototype.hasOwnProperty.call(mainSiteRoutes, label)) {
-      route = mainSiteRoutes[label];
-    }
-
-    // Book Now and every non-header/main-site link keep their normal behavior.
-    if (route === null) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-    window.location.assign(`${mainSiteOrigin}${route}`);
-  };
   updateHeaderLinks();
 
   // Shared Header can re-render when its hamburger opens/closes. Keep links
   // corrected after those renders without changing the Header's layout.
   const observer = new MutationObserver(updateHeaderLinks);
   observer.observe(document.body, { childList: true, subtree: true });
-  document.addEventListener('click', forceMainSiteLeftClick, true);
 
-  return () => {
-    observer.disconnect();
-    document.removeEventListener('click', forceMainSiteLeftClick, true);
-  };
+  return () => observer.disconnect();
 }, []);
 
 if (isPendingBookingApprovalPage) {
